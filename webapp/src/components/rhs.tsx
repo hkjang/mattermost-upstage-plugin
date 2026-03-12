@@ -78,7 +78,7 @@ export default function RHSPane() {
     return <div style={{display: 'flex', flexDirection: 'column', gap: 16, padding: 16}}>
         <section style={card}>
             <strong>{'Upstage Document Parser'}</strong>
-            <span style={{fontSize: 12, opacity: .8}}>{'현재 선택한 포스트의 첨부 파일을 사용합니다. 메시지는 선택 사항이며, 결과 메시지 상단에 함께 표시됩니다.'}</span>
+            <span style={{fontSize: 12, opacity: .8}}>{'현재 선택한 포스트의 첨부 파일만 Upstage API의 document 파트로 전송합니다. 메시지는 파싱 입력으로 전달되지 않습니다.'}</span>
             {loading && <span>{'봇 목록을 불러오는 중입니다...'}</span>}
             {!loading && bots.length === 0 && <span>{'현재 채널에서 사용할 수 있는 Upstage 봇이 없습니다.'}</span>}
             {!loading && bots.length > 0 && <>

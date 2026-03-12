@@ -184,36 +184,13 @@ func (p *Plugin) invokeUpstageDocumentParse(
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
-	fields := map[string]string{
-		"model":                  defaultIfEmpty(strings.TrimSpace(bot.Model), defaultUpstageModel),
-		"mode":                   normalizeUpstageMode(bot.Mode),
-		"ocr":                    normalizeUpstageOCRMode(bot.OCR),
-		"coordinates":            strconv.FormatBool(bot.useCoordinates()),
-		"chart_recognition":      strconv.FormatBool(bot.useChartRecognition()),
-		"merge_multipage_tables": strconv.FormatBool(bot.useMergeMultipageTables()),
+	fields, err := buildUpstageFormFields(bot)
+	if err != nil {
+		return upstageDocumentResult{}, 0, err
 	}
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {
 			return upstageDocumentResult{}, 0, fmt.Errorf("failed to write %s field: %w", key, err)
-		}
-	}
-
-	if len(bot.OutputFormats) > 0 {
-		rawOutputFormats, err := json.Marshal(bot.OutputFormats)
-		if err != nil {
-			return upstageDocumentResult{}, 0, fmt.Errorf("failed to encode output formats: %w", err)
-		}
-		if err := writer.WriteField("output_formats", string(rawOutputFormats)); err != nil {
-			return upstageDocumentResult{}, 0, fmt.Errorf("failed to write output_formats field: %w", err)
-		}
-	}
-	if len(bot.Base64Encoding) > 0 {
-		rawBase64Encoding, err := json.Marshal(bot.Base64Encoding)
-		if err != nil {
-			return upstageDocumentResult{}, 0, fmt.Errorf("failed to encode base64_encoding: %w", err)
-		}
-		if err := writer.WriteField("base64_encoding", string(rawBase64Encoding)); err != nil {
-			return upstageDocumentResult{}, 0, fmt.Errorf("failed to write base64_encoding field: %w", err)
 		}
 	}
 
@@ -280,6 +257,54 @@ func (p *Plugin) invokeUpstageDocumentParse(
 		Attachment: attachment,
 		Response:   parsed,
 	}, response.StatusCode, nil
+}
+
+func buildUpstageFormFields(bot BotDefinition) (map[string]string, error) {
+	fields := map[string]string{
+		"model": defaultIfEmpty(strings.TrimSpace(bot.Model), defaultUpstageModel),
+	}
+
+	if formatted, err := formatUpstageListField(bot.OutputFormats); err != nil {
+		return nil, fmt.Errorf("failed to encode output_formats: %w", err)
+	} else if formatted != "" {
+		fields["output_formats"] = formatted
+	}
+
+	if formatted, err := formatUpstageListField(bot.Base64Encoding); err != nil {
+		return nil, fmt.Errorf("failed to encode base64_encoding: %w", err)
+	} else if formatted != "" {
+		fields["base64_encoding"] = formatted
+	}
+
+	if mode := normalizeUpstageMode(bot.Mode); mode != "standard" {
+		fields["mode"] = mode
+	}
+	if ocr := normalizeUpstageOCRMode(bot.OCR); ocr != "auto" {
+		fields["ocr"] = ocr
+	}
+	if !bot.useCoordinates() {
+		fields["coordinates"] = strconv.FormatBool(false)
+	}
+	if !bot.useChartRecognition() {
+		fields["chart_recognition"] = strconv.FormatBool(false)
+	}
+	if bot.useMergeMultipageTables() {
+		fields["merge_multipage_tables"] = strconv.FormatBool(true)
+	}
+
+	return fields, nil
+}
+
+func formatUpstageListField(values []string) (string, error) {
+	if len(values) == 0 {
+		return "", nil
+	}
+
+	raw, err := json.Marshal(values)
+	if err != nil {
+		return "", err
+	}
+	return string(raw), nil
 }
 
 func choosePreferredUpstageContent(response upstageParseResponse, preferred []string) (string, string) {

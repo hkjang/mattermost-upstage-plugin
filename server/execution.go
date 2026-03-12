@@ -172,13 +172,8 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 	}, nil
 }
 
-func buildDocumentResponseMessage(prompt string, results []upstageDocumentResult, maxLength int) string {
-	sections := make([]string, 0, len(results)+1)
-	prompt = strings.TrimSpace(prompt)
-	if prompt != "" {
-		sections = append(sections, fmt.Sprintf("요청 메시지: %s", prompt))
-	}
-
+func buildDocumentResponseMessage(_ string, results []upstageDocumentResult, maxLength int) string {
+	sections := make([]string, 0, len(results))
 	for _, result := range results {
 		contentFormat, content := choosePreferredUpstageContent(result.Response, defaultBotOutputFormats)
 		if content == "" {

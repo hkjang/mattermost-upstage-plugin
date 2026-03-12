@@ -133,6 +133,46 @@ func TestChoosePreferredUpstageContent(t *testing.T) {
 	require.Equal(t, "# Invoice", content)
 }
 
+func TestBuildUpstageFormFieldsUsesMinimalDefaults(t *testing.T) {
+	bot, err := (BotDefinition{Username: "parser-bot"}).normalize()
+	require.NoError(t, err)
+
+	fields, err := buildUpstageFormFields(bot)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{
+		"model":          defaultUpstageModel,
+		"output_formats": `["markdown","text"]`,
+	}, fields)
+}
+
+func TestBuildUpstageFormFieldsIncludesOptionalOverrides(t *testing.T) {
+	bot, err := (BotDefinition{
+		Username:             "parser-bot",
+		Model:                "document-parse",
+		Mode:                 "enhanced",
+		OCR:                  "force",
+		Coordinates:          boolPtr(false),
+		ChartRecognition:     boolPtr(false),
+		MergeMultipageTables: boolPtr(true),
+		OutputFormats:        []string{"html", "text"},
+		Base64Encoding:       []string{"table"},
+	}).normalize()
+	require.NoError(t, err)
+
+	fields, err := buildUpstageFormFields(bot)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{
+		"model":                  "document-parse",
+		"mode":                   "enhanced",
+		"ocr":                    "force",
+		"coordinates":            "false",
+		"chart_recognition":      "false",
+		"merge_multipage_tables": "true",
+		"output_formats":         `["html","text"]`,
+		"base64_encoding":        `["table"]`,
+	}, fields)
+}
+
 func TestExtractTextFromBody(t *testing.T) {
 	body := []byte(`{"error":{"message":"invalid api key"}}`)
 	require.Equal(t, "invalid api key", extractTextFromBody(body))

@@ -118,7 +118,8 @@ function renderPlaceholder(args: any) {
             <span style={note}>{'여러 Mattermost 봇에 서로 다른 Upstage 문서 파서 입력 파라미터를 지정할 수 있습니다.'}</span>
             <div style={box}>
                 <div>{'봇은 DM 또는 @멘션 + 파일 첨부로 호출됩니다.'}</div>
-                <div>{'메시지 본문은 응답 상단에 함께 기록되지만, Upstage API의 직접 입력 필드는 아닙니다.'}</div>
+                <div>{'메시지 본문은 Upstage API로 전달되지 않습니다. 실제 요청은 첨부 파일만 document 파트로 업로드합니다.'}</div>
+                <div>{'base64_encoding은 업로드 이미지 자체가 아니라, 응답에 base64로 포함할 레이아웃 카테고리(table 등)를 지정하는 옵션입니다.'}</div>
             </div>
             {source === 'legacy' && <div style={box}>{'기존 개별 설정을 불러왔습니다. 저장하면 단일 Config 형식으로 정리됩니다.'}</div>}
             {props.setByEnv && <div style={box}>{'이 설정은 환경 변수로 관리되고 있어 여기에서 수정할 수 없습니다.'}</div>}
@@ -188,7 +189,7 @@ function renderPlaceholder(args: any) {
                         </div>
                         <div style={row2}>
                             <Field label={'output_formats'}><input disabled={disabled} style={field} value={join(bot.output_formats)} placeholder={'markdown, text, html'} onChange={(e) => updateBot(bot.local_id, {output_formats: formats(split(e.target.value, true))})}/></Field>
-                            <Field label={'base64_encoding'}><input disabled={disabled} style={field} value={join(bot.base64_encoding)} placeholder={'table, chart'} onChange={(e) => updateBot(bot.local_id, {base64_encoding: split(e.target.value, true)})}/></Field>
+                            <Field label={'base64_encoding'}><input disabled={disabled} style={field} value={join(bot.base64_encoding)} placeholder={'table'} onChange={(e) => updateBot(bot.local_id, {base64_encoding: split(e.target.value, true)})}/></Field>
                         </div>
                         <div style={row2}>
                             <Field label={'봇 전용 URL'}><input disabled={disabled} style={field} value={bot.base_url} placeholder={'비워 두면 기본 URL 사용'} onChange={(e) => updateBot(bot.local_id, {base_url: e.target.value})}/></Field>
