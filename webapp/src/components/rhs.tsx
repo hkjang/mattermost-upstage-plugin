@@ -98,6 +98,7 @@ export default function RHSPane() {
             <strong>{'최근 실행 결과'}</strong>
             <div>{`${lastResult.bot_name || lastResult.bot_username} - ${lastResult.status}`}</div>
             <div>{`Model: ${lastResult.model}`}</div>
+            {typeof lastResult.api_duration_ms === 'number' && lastResult.api_duration_ms > 0 && <div>{`API 응답 시간: ${(lastResult.api_duration_ms / 1000).toFixed(2)}초`}</div>}
             {lastResult.output && <div style={{fontSize: 12, opacity: .8, whiteSpace: 'pre-wrap'}}>{cut(lastResult.output, 400)}</div>}
             {lastResult.error_message && <div style={{whiteSpace: 'pre-wrap'}}>{lastResult.error_message}</div>}
             {lastResult.error_code && <div>{`Code: ${lastResult.error_code}`}</div>}

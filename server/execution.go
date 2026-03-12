@@ -32,6 +32,7 @@ type BotRunResult struct {
 	BotUsername   string `json:"bot_username"`
 	BotName       string `json:"bot_name"`
 	Model         string `json:"model"`
+	APIDurationMS int64  `json:"api_duration_ms,omitempty"`
 	PostID        string `json:"post_id,omitempty"`
 	Status        string `json:"status"`
 	Output        string `json:"output,omitempty"`
@@ -55,6 +56,7 @@ type executionFailureView struct {
 	Retryable   bool
 	InputDebug  string
 	OutputDebug string
+	APIDuration time.Duration
 }
 
 const upstageBotPostType = "custom_upstage_bot"
@@ -120,10 +122,12 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 	}
 
 	results := make([]upstageDocumentResult, 0, len(attachments))
+	apiDurationTotal := time.Duration(0)
 	for _, attachment := range attachments {
-		result, httpStatus, invokeErr := p.invokeUpstageDocumentParse(ctx, serviceConfig, *bot, attachment, correlationID)
+		result, httpStatus, apiDuration, invokeErr := p.invokeUpstageDocumentParse(ctx, serviceConfig, *bot, attachment, correlationID)
+		apiDurationTotal += apiDuration
 		if invokeErr != nil {
-			failure := describeExecutionFailure(invokeErr, httpStatus >= 500 || httpStatus == 0)
+			failure := describeExecutionFailure(invokeErr, httpStatus >= 500 || httpStatus == 0, apiDurationTotal)
 			record := newExecutionRecord(request, account.Definition, correlationID, "failed", prompt, failure.Message, failure.ErrorCode, failure.Retryable, startedAt, time.Now())
 			p.appendExecutionHistory(request.UserID, record)
 			p.logUsage(cfg, correlationID, request, account.Definition, "failed", failure.Message)
@@ -136,6 +140,7 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 				BotUsername:   account.Definition.Username,
 				BotName:       account.Definition.DisplayName,
 				Model:         account.Definition.Model,
+				APIDurationMS: apiDurationTotal.Milliseconds(),
 				Status:        "failed",
 				ErrorMessage:  failure.Message,
 				ErrorCode:     failure.ErrorCode,
@@ -150,9 +155,9 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 	}
 
 	output := buildDocumentResponseMessage(prompt, results, cfg.MaxOutputLength)
-	post, err := p.postSuccess(channel, request.RootID, account, correlationID, output)
+	post, err := p.postSuccess(channel, request.RootID, account, correlationID, output, apiDurationTotal)
 	if err != nil {
-		failure := describeExecutionFailure(err, true)
+		failure := describeExecutionFailure(err, true, apiDurationTotal)
 		record := newExecutionRecord(request, account.Definition, correlationID, "failed", prompt, failure.Message, failure.ErrorCode, failure.Retryable, startedAt, time.Now())
 		p.appendExecutionHistory(request.UserID, record)
 		return nil, err
@@ -168,6 +173,7 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 		BotUsername:   account.Definition.Username,
 		BotName:       account.Definition.DisplayName,
 		Model:         account.Definition.Model,
+		APIDurationMS: apiDurationTotal.Milliseconds(),
 		PostID:        post.Id,
 		Status:        "completed",
 		Output:        output,
@@ -177,7 +183,7 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 func buildDocumentResponseMessage(_ string, results []upstageDocumentResult, maxLength int) string {
 	sections := make([]string, 0, len(results))
 	for _, result := range results {
-		contentFormat, content := choosePreferredUpstageContent(result.Response, defaultBotOutputFormats)
+		contentFormat, content := buildRenderableUpstageContent(result.Response, defaultBotOutputFormats)
 		if content == "" {
 			content = "_파싱된 본문이 없습니다._"
 		}
@@ -205,12 +211,109 @@ func renderParsedContent(format, value string) string {
 		return value
 	}
 	if format == "html" {
-		return "```html\n" + value + "\n```"
+		return convertUpstageHTMLFragmentToMessage("document", value)
 	}
 	if format == "json" {
 		return "```json\n" + value + "\n```"
 	}
 	return value
+}
+
+func buildRenderableUpstageContent(response upstageParseResponse, preferred []string) (string, string) {
+	if format, content := buildPageSeparatedContent(response, preferred); content != "" {
+		return format, content
+	}
+
+	format, content := choosePreferredUpstageContent(response, preferred)
+	if format == "html" {
+		return "markdown", convertUpstageHTMLFragmentToMessage("document", content)
+	}
+
+	return format, content
+}
+
+func buildPageSeparatedContent(response upstageParseResponse, preferred []string) (string, string) {
+	if response.Usage.Pages <= 0 || len(response.Elements) == 0 {
+		return "", ""
+	}
+
+	elementsByPage := make(map[int][]upstageParseElement, response.Usage.Pages)
+	maxPage := response.Usage.Pages
+	for _, element := range response.Elements {
+		if element.Page <= 0 {
+			continue
+		}
+		elementsByPage[element.Page] = append(elementsByPage[element.Page], element)
+		if element.Page > maxPage {
+			maxPage = element.Page
+		}
+	}
+	if len(elementsByPage) == 0 {
+		return "", ""
+	}
+
+	sections := make([]string, 0, maxPage)
+	chosenFormat := ""
+	for page := 1; page <= maxPage; page++ {
+		pageElements := elementsByPage[page]
+		pageFormat, pageContent := choosePreferredUpstagePageContent(pageElements, preferred)
+		if pageContent == "" {
+			pageContent = "_이 페이지에는 추출된 본문이 없습니다._"
+		}
+		if pageFormat != "" && chosenFormat == "" {
+			chosenFormat = pageFormat
+		}
+
+		renderFormat := defaultIfEmpty(pageFormat, chosenFormat)
+		rendered := pageContent
+		if renderFormat != "" {
+			rendered = renderParsedContent(renderFormat, pageContent)
+		}
+
+		sections = append(sections, strings.TrimSpace(strings.Join([]string{
+			fmt.Sprintf("#### Page %d", page),
+			"",
+			rendered,
+		}, "\n")))
+	}
+
+	return defaultIfEmpty(chosenFormat, "markdown"), strings.Join(sections, "\n\n---\n\n")
+}
+
+func choosePreferredUpstagePageContent(elements []upstageParseElement, preferred []string) (string, string) {
+	if len(elements) == 0 {
+		return "", ""
+	}
+
+	for _, format := range preferred {
+		if content := joinUpstagePageElementContent(elements, format); content != "" {
+			return format, content
+		}
+	}
+
+	for _, format := range []string{"markdown", "text", "html"} {
+		if content := joinUpstagePageElementContent(elements, format); content != "" {
+			if format == "html" {
+				return "markdown", content
+			}
+			return format, content
+		}
+	}
+
+	return "", ""
+}
+
+func joinUpstagePageElementContent(elements []upstageParseElement, format string) string {
+	parts := make([]string, 0, len(elements))
+	for _, element := range elements {
+		value := renderableUpstageElementContent(element, format)
+		if strings.TrimSpace(value) == "" {
+			continue
+		}
+		parts = append(parts, strings.TrimSpace(value))
+	}
+
+	return strings.TrimSpace(strings.Join(parts, "\n\n"))
 }
 
 func (p *Plugin) ensureBots() error {
@@ -379,7 +482,7 @@ func (p *Plugin) ensureBotInChannel(channelID, botUserID string) error {
 	return nil
 }
 
-func (p *Plugin) postSuccess(channel *model.Channel, rootID string, account botAccount, correlationID, output string) (*model.Post, error) {
+func (p *Plugin) postSuccess(channel *model.Channel, rootID string, account botAccount, correlationID, output string, apiDuration time.Duration) (*model.Post, error) {
 	if err := p.ensureBotInChannel(channel.Id, account.UserID); err != nil {
 		return nil, err
 	}
@@ -389,11 +492,12 @@ func (p *Plugin) postSuccess(channel *model.Channel, rootID string, account botA
 		ChannelId: channel.Id,
 		RootId:    rootID,
 		Type:      upstageBotPostType,
-		Message:   buildBotResponseMessage(output, correlationID),
+		Message:   buildBotResponseMessage(output, correlationID, apiDuration),
 		Props: map[string]any{
 			"from_bot":                "true",
 			"upstage_bot_id":          account.Definition.ID,
 			"upstage_correlation_id":  correlationID,
+			"upstage_api_duration_ms": apiDuration.Milliseconds(),
 			"upstage_model":           account.Definition.Model,
 			"upstage_document_parser": "true",
 		},
@@ -419,6 +523,7 @@ func (p *Plugin) postFailure(channel *model.Channel, rootID string, account botA
 			"from_bot":                "true",
 			"upstage_bot_id":          account.Definition.ID,
 			"upstage_correlation_id":  correlationID,
+			"upstage_api_duration_ms": failure.APIDuration.Milliseconds(),
 			"upstage_model":           account.Definition.Model,
 			"upstage_error":           "true",
 			"upstage_error_code":      failure.ErrorCode,
@@ -484,19 +589,24 @@ func botDescription(bot BotDefinition) string {
 	return fmt.Sprintf("Upstage document parser bot using %s", bot.Model)
 }
 
-func buildBotResponseMessage(output, correlationID string) string {
+func buildBotResponseMessage(output, correlationID string, apiDuration time.Duration) string {
 	body := strings.TrimSpace(output)
 	if body == "" {
 		body = "_빈 응답이 반환되었습니다._"
 	}
-	return strings.TrimSpace(strings.Join([]string{
+
+	lines := []string{
 		body,
 		"",
 		fmt.Sprintf("_Correlation ID:_ `%s`", correlationID),
-	}, "\n"))
+	}
+	if apiDuration > 0 {
+		lines = append(lines, fmt.Sprintf("_Upstage API 응답 시간:_ `%s`", formatUpstageAPIDuration(apiDuration)))
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
-func describeExecutionFailure(err error, defaultRetryable bool) executionFailureView {
+func describeExecutionFailure(err error, defaultRetryable bool, apiDuration time.Duration) executionFailureView {
 	if err == nil {
 		return executionFailureView{}
 	}
@@ -514,13 +624,15 @@ func describeExecutionFailure(err error, defaultRetryable bool) executionFailure
 			Retryable:   callErr.Retryable,
 			InputDebug:  callErr.InputDebug,
 			OutputDebug: callErr.OutputDebug,
+			APIDuration: apiDuration,
 		}
 	}
 
 	return executionFailureView{
-		HasFailure: true,
-		Message:    strings.TrimSpace(err.Error()),
-		Retryable:  defaultRetryable,
+		HasFailure:  true,
+		Message:     strings.TrimSpace(err.Error()),
+		Retryable:   defaultRetryable,
+		APIDuration: apiDuration,
 	}
 }
 
@@ -548,7 +660,26 @@ func buildBotFailureMessage(bot BotDefinition, correlationID string, failure exe
 		lines = append(lines, "", "_상단 버튼에서 요청/응답 파라미터를 볼 수 있습니다._")
 	}
 	lines = append(lines, "", fmt.Sprintf("_Correlation ID:_ `%s`", correlationID))
+	if failure.APIDuration > 0 {
+		lines = append(lines, fmt.Sprintf("_Upstage API 응답 시간:_ `%s`", formatUpstageAPIDuration(failure.APIDuration)))
+	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func formatUpstageAPIDuration(duration time.Duration) string {
+	if duration <= 0 {
+		return "0.00초"
+	}
+
+	seconds := duration.Seconds()
+	switch {
+	case seconds < 10:
+		return fmt.Sprintf("%.2f초", seconds)
+	case seconds < 100:
+		return fmt.Sprintf("%.1f초", seconds)
+	default:
+		return fmt.Sprintf("%.0f초", seconds)
+	}
 }
 
 func isBotNotFoundError(err error) bool {

@@ -1,7 +1,7 @@
 {
     "id": "com.mattermost.upstage-document-parser",
     "name": "Upstage Document Parser",
-    "version": "0.1.20-dev",
+    "version": "0.1.21-dev",
     "description": "Mattermost의 파일 첨부와 메시지를 받아 Upstage Document Parser로 문서를 파싱하는 전용 봇 플러그인입니다.",
     "homepage_url": "https://console.upstage.ai/api/parse/document-parsing",
     "support_url": "https://console.upstage.ai/api/parse/document-parsing",

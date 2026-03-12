@@ -7,6 +7,7 @@ import (
 	"mime/multipart"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
@@ -135,6 +136,56 @@ func TestChoosePreferredUpstageContent(t *testing.T) {
 
 	require.Equal(t, "markdown", format)
 	require.Equal(t, "# Invoice", content)
+}
+
+func TestBuildDocumentResponseMessageSeparatesPages(t *testing.T) {
+	message := buildDocumentResponseMessage("", []upstageDocumentResult{{
+		Attachment: botAttachment{Name: "invoice.pdf"},
+		Response: upstageParseResponse{
+			Model: "document-parse",
+			Usage: upstageUsage{Pages: 2},
+			Elements: []upstageParseElement{
+				{
+					Category: "heading1",
+					Page:     1,
+					Content:  upstageParseContent{HTML: "<h1>첫 페이지 제목</h1>"},
+				},
+				{
+					Category: "table",
+					Page:     1,
+					Content:  upstageParseContent{HTML: "<table><tr><th>항목</th><th>값</th></tr><tr><td>A</td><td>1</td></tr></table>"},
+				},
+				{
+					Category: "paragraph",
+					Page:     2,
+					Content:  upstageParseContent{HTML: "<p>둘째 페이지 본문</p>"},
+				},
+			},
+		},
+	}}, 20000)
+
+	require.Contains(t, message, "#### Page 1")
+	require.Contains(t, message, "#### Page 2")
+	require.Contains(t, message, "---")
+	require.Contains(t, message, "<table>")
+	require.Contains(t, message, "둘째 페이지 본문")
+}
+
+func TestBuildBotResponseMessageIncludesAPIDuration(t *testing.T) {
+	message := buildBotResponseMessage("파싱 완료", "corr-123", 2350*time.Millisecond)
+
+	require.Contains(t, message, "_Correlation ID:_ `corr-123`")
+	require.Contains(t, message, "_Upstage API 응답 시간:_ `2.35초`")
+}
+
+func TestBuildBotFailureMessageIncludesAPIDuration(t *testing.T) {
+	message := buildBotFailureMessage(BotDefinition{Model: "document-parse"}, "corr-123", executionFailureView{
+		Message:     "실패",
+		APIDuration: 12750 * time.Millisecond,
+	})
+
+	require.Contains(t, message, "_Correlation ID:_ `corr-123`")
+	require.Contains(t, message, "_Upstage API 응답 시간:_ `12.8초`")
 }
 
 func TestBuildUpstageFormFieldsUsesMinimalDefaults(t *testing.T) {

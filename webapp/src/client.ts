@@ -45,6 +45,7 @@ export type BotRunResult = {
     bot_username: string;
     bot_name: string;
     model: string;
+    api_duration_ms?: number;
     post_id?: string;
     status: string;
     output?: string;

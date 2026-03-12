@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"mime/multipart"
 	"net"
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -46,11 +48,18 @@ type upstageUsage struct {
 	Pages int `json:"pages"`
 }
 
+type upstageParseElement struct {
+	Category string              `json:"category"`
+	Content  upstageParseContent `json:"content"`
+	Page     int                 `json:"page"`
+}
+
 type upstageParseResponse struct {
-	API     string              `json:"api"`
-	Content upstageParseContent `json:"content"`
-	Model   string              `json:"model"`
-	Usage   upstageUsage        `json:"usage"`
+	API      string                `json:"api"`
+	Content  upstageParseContent   `json:"content"`
+	Elements []upstageParseElement `json:"elements"`
+	Model    string                `json:"model"`
+	Usage    upstageUsage          `json:"usage"`
 }
 
 type upstageDocumentResult struct {
@@ -95,6 +104,8 @@ type upstageResponseDebug struct {
 	Hint       string `json:"hint,omitempty"`
 	Body       string `json:"body,omitempty"`
 }
+
+var upstageHTMLTagPattern = regexp.MustCompile(`(?s)<[^>]+>`)
 
 func (e *upstageCallError) Error() string {
 	if e == nil {
@@ -206,15 +217,17 @@ func (p *Plugin) invokeUpstageDocumentParse(
 	bot BotDefinition,
 	attachment botAttachment,
 	correlationID string,
-) (upstageDocumentResult, int, error) {
+) (upstageDocumentResult, int, time.Duration, error) {
 	fields, err := buildUpstageFormFields(bot)
 	if err != nil {
-		return upstageDocumentResult{}, 0, err
+		return upstageDocumentResult{}, 0, 0, err
 	}
 
+	startedAt := time.Now()
 	result, statusCode, err := p.performUpstageDocumentParseRequest(ctx, service, bot, attachment, correlationID, fields, "")
+	elapsed := time.Since(startedAt)
 	if err == nil || statusCode != http.StatusBadRequest || strings.TrimSpace(fields["output_formats"]) == "" {
-		return result, statusCode, err
+		return result, statusCode, elapsed, err
 	}
 
 	retryFields := cloneUpstageFields(fields)
@@ -223,10 +236,10 @@ func (p *Plugin) invokeUpstageDocumentParse(
 	retryResult, retryStatus, retryErr := p.performUpstageDocumentParseRequest(ctx, service, bot, attachment, correlationID, retryFields, "retry_without_output_formats")
 	if retryErr == nil {
 		p.API.LogWarn("Upstage request succeeded after retrying without output_formats", "correlation_id", correlationID, "bot_id", bot.ID, "filename", sanitizeUploadFilename(attachment.Name))
-		return retryResult, retryStatus, nil
+		return retryResult, retryStatus, time.Since(startedAt), nil
 	}
 
-	return retryResult, retryStatus, retryErr
+	return retryResult, retryStatus, time.Since(startedAt), retryErr
 }
 
 func (p *Plugin) performUpstageDocumentParseRequest(
@@ -414,6 +427,133 @@ func choosePreferredUpstageContent(response upstageParseResponse, preferred []st
 		return "", ""
 	}
 	return "json", string(pretty)
+}
+
+func renderableUpstageElementContent(element upstageParseElement, format string) string {
+	switch format {
+	case "markdown":
+		if value := strings.TrimSpace(element.Content.Markdown); value != "" {
+			return value
+		}
+		if value := strings.TrimSpace(element.Content.Text); value != "" {
+			return value
+		}
+		if value := strings.TrimSpace(element.Content.HTML); value != "" {
+			return convertUpstageHTMLFragmentToMessage(element.Category, value)
+		}
+	case "text":
+		if value := strings.TrimSpace(element.Content.Text); value != "" {
+			return value
+		}
+		if value := strings.TrimSpace(element.Content.Markdown); value != "" {
+			return value
+		}
+		if value := strings.TrimSpace(element.Content.HTML); value != "" {
+			return convertUpstageHTMLFragmentToMessage(element.Category, value)
+		}
+	case "html":
+		if value := strings.TrimSpace(element.Content.HTML); value != "" {
+			return convertUpstageHTMLFragmentToMessage(element.Category, value)
+		}
+		if value := strings.TrimSpace(element.Content.Markdown); value != "" {
+			return value
+		}
+		if value := strings.TrimSpace(element.Content.Text); value != "" {
+			return value
+		}
+	}
+
+	return ""
+}
+
+func convertUpstageHTMLFragmentToMessage(category, fragment string) string {
+	fragment = strings.TrimSpace(fragment)
+	if fragment == "" {
+		return ""
+	}
+
+	if strings.Contains(strings.ToLower(fragment), "<table") {
+		return strings.TrimSpace(normalizeUpstageHTMLLineBreaks(fragment))
+	}
+
+	text := normalizeUpstageHTMLLineBreaks(fragment)
+	text = upstageHTMLTagPattern.ReplaceAllString(text, "")
+	text = html.UnescapeString(text)
+	text = normalizeUpstagePlainText(text)
+	if text == "" {
+		return ""
+	}
+
+	switch normalizeUpstageCategory(category) {
+	case "heading1":
+		return "# " + text
+	case "heading2":
+		return "## " + text
+	case "heading3":
+		return "### " + text
+	case "heading4":
+		return "#### " + text
+	case "heading5":
+		return "##### " + text
+	case "heading6":
+		return "###### " + text
+	case "caption":
+		return "_" + text + "_"
+	default:
+		return text
+	}
+}
+
+func normalizeUpstageHTMLLineBreaks(value string) string {
+	replacements := []string{
+		"<br>", "\n",
+		"<br/>", "\n",
+		"<br />", "\n",
+		"</p>", "\n",
+		"</div>", "\n",
+		"</section>", "\n",
+		"</article>", "\n",
+		"</header>", "\n",
+		"</footer>", "\n",
+		"</figure>", "\n",
+		"</figcaption>", "\n",
+		"</caption>", "\n",
+		"</li>", "\n",
+		"</h1>", "\n",
+		"</h2>", "\n",
+		"</h3>", "\n",
+		"</h4>", "\n",
+		"</h5>", "\n",
+		"</h6>", "\n",
+	}
+	replacer := strings.NewReplacer(replacements...)
+	return replacer.Replace(value)
+}
+
+func normalizeUpstagePlainText(value string) string {
+	lines := strings.Split(strings.ReplaceAll(value, "\r\n", "\n"), "\n")
+	normalized := make([]string, 0, len(lines))
+	previousBlank := true
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			if previousBlank {
+				continue
+			}
+			normalized = append(normalized, "")
+			previousBlank = true
+			continue
+		}
+
+		normalized = append(normalized, line)
+		previousBlank = false
+	}
+
+	return strings.TrimSpace(strings.Join(normalized, "\n"))
+}
+
+func normalizeUpstageCategory(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func (p *Plugin) testUpstageConnection(ctx context.Context, cfg *runtimeConfiguration) (*upstageConnectionStatus, error) {

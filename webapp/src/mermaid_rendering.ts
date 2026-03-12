@@ -15,9 +15,13 @@ export function containsCompleteMermaidFence(message: string) {
 }
 
 export function normalizeRenderableMessage(message: string) {
+    const withNormalizedTables = transformOutsideFencedCodeBlocks(
+        (message || '').replace(/\r\n/g, '\n'),
+        normalizeEmbeddedHtmlTables,
+    );
     const normalizedLines = normalizeMarkdownTableLines(
         normalizeFencedCodeBlockLines(
-            normalizeMermaidLines((message || '').replace(/\r\n/g, '\n')).split('\n'),
+            normalizeMermaidLines(withNormalizedTables).split('\n'),
         ),
     );
     return normalizedLines.join('\n').replace(/\n{3,}/g, '\n\n');
@@ -135,6 +139,95 @@ function normalizeMermaidLines(linesText: string) {
     }
 
     return normalized.join('\n');
+}
+
+function transformOutsideFencedCodeBlocks(message: string, transform: (value: string) => string) {
+    const lines = message.split('\n');
+    const segments: string[] = [];
+    const buffer: string[] = [];
+    let inFence = false;
+    let fenceMarker = '';
+
+    const flushBuffer = () => {
+        if (buffer.length === 0) {
+            return;
+        }
+
+        segments.push(transform(buffer.join('\n')));
+        buffer.length = 0;
+    };
+
+    for (const line of lines) {
+        if (!inFence) {
+            const openingFence = matchFenceOpening(line);
+            if (openingFence) {
+                flushBuffer();
+                inFence = true;
+                fenceMarker = openingFence;
+                segments.push(line);
+                continue;
+            }
+
+            buffer.push(line);
+            continue;
+        }
+
+        segments.push(line);
+        if (isFenceClosing(line, fenceMarker)) {
+            inFence = false;
+            fenceMarker = '';
+        }
+    }
+
+    flushBuffer();
+    return segments.join('\n');
+}
+
+function normalizeEmbeddedHtmlTables(message: string) {
+    return message.replace(/<table[\s\S]*?<\/table>/gi, (match) => convertHtmlTableToMarkdown(match));
+}
+
+function convertHtmlTableToMarkdown(tableHtml: string) {
+    const rows = Array.from(tableHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)).map((rowMatch) => {
+        return Array.from(rowMatch[1].matchAll(/<(th|td)\b[^>]*>([\s\S]*?)<\/\1>/gi)).map((cellMatch) => normalizeHtmlTableCell(cellMatch[2]));
+    }).filter((cells) => cells.length > 0);
+    if (rows.length === 0) {
+        return tableHtml;
+    }
+
+    const columnCount = rows.reduce((max, row) => Math.max(max, row.length), 0);
+    const normalizedRows = rows.map((row) => Array.from({length: columnCount}, (_, index) => escapeMarkdownTableCell(row[index] || '')));
+    const separator = Array.from({length: columnCount}, () => '---');
+
+    return [
+        `| ${normalizedRows[0].join(' | ')} |`,
+        `| ${separator.join(' | ')} |`,
+        ...normalizedRows.slice(1).map((row) => `| ${row.join(' | ')} |`),
+    ].join('\n');
+}
+
+function normalizeHtmlTableCell(cellHtml: string) {
+    const text = decodeHtmlEntities(
+        cellHtml.
+            replace(/<br\s*\/?>/gi, '\n').
+            replace(/<[^>]+>/g, ''),
+    );
+    return text.replace(/\s*\n\s*/g, ' / ').replace(/\s+/g, ' ').trim();
+}
+
+function escapeMarkdownTableCell(value: string) {
+    return value.replace(/\|/g, '\\|');
+}
+
+function decodeHtmlEntities(value: string) {
+    return value.
+        replace(/&nbsp;/gi, ' ').
+        replace(/&amp;/gi, '&').
+        replace(/&lt;/gi, '<').
+        replace(/&gt;/gi, '>').
+        replace(/&quot;/gi, '"').
+        replace(/&#39;/gi, '\'').
+        replace(/&apos;/gi, '\'');
 }
 
 function normalizeFencedCodeBlockLines(lines: string[]) {

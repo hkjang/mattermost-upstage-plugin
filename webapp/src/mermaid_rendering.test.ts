@@ -107,3 +107,35 @@ test('normalizeRenderableMessage does not rewrite markdown table syntax inside f
         '```',
     ].join('\n'));
 });
+
+test('normalizeRenderableMessage converts embedded html tables into markdown tables', () => {
+    const normalized = normalizeRenderableMessage([
+        '표 응답입니다.',
+        '<table><tr><th>이름</th><th>값</th></tr><tr><td>A</td><td>1</td></tr></table>',
+        '끝.',
+    ].join('\n'));
+
+    expect(normalized).toBe([
+        '표 응답입니다.',
+        '',
+        '| 이름 | 값 |',
+        '| --- | --- |',
+        '| A | 1 |',
+        '',
+        '끝.',
+    ].join('\n'));
+});
+
+test('normalizeRenderableMessage keeps html tables untouched inside fenced code blocks', () => {
+    const normalized = normalizeRenderableMessage([
+        '```html',
+        '<table><tr><td>A</td></tr></table>',
+        '```',
+    ].join('\n'));
+
+    expect(normalized).toBe([
+        '```html',
+        '<table><tr><td>A</td></tr></table>',
+        '```',
+    ].join('\n'));
+});
