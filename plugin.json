@@ -1,0 +1,32 @@
+{
+    "id": "com.mattermost.upstage-document-parser",
+    "name": "Upstage Document Parser",
+    "version": "0.1.18-dev",
+    "description": "Mattermost의 파일 첨부와 메시지를 받아 Upstage Document Parser로 문서를 파싱하는 전용 봇 플러그인입니다.",
+    "homepage_url": "https://console.upstage.ai/api/parse/document-parsing",
+    "support_url": "https://console.upstage.ai/api/parse/document-parsing",
+    "icon_path": "assets/starter-template-icon.svg",
+    "min_server_version": "10.0.0",
+    "server": {
+        "executables": {
+            "linux-amd64": "server/dist/plugin-linux-amd64",
+            "linux-arm64": "server/dist/plugin-linux-arm64",
+            "darwin-amd64": "server/dist/plugin-darwin-amd64",
+            "darwin-arm64": "server/dist/plugin-darwin-arm64",
+            "windows-amd64": "server/dist/plugin-windows-amd64.exe"
+        }
+    },
+    "webapp": {
+        "bundle_path": "webapp/dist/main.js"
+    },
+    "settings_schema": {
+        "header": "",
+        "footer": "",
+        "settings": [
+            {
+                "key": "Config",
+                "type": "custom"
+            }
+        ]
+    }
+}
