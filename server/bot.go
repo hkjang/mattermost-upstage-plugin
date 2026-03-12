@@ -147,7 +147,7 @@ func normalizeOutputFormats(values []string) []string {
 		"text":     {},
 	}
 	if len(values) == 0 {
-		return append([]string{}, defaultBotOutputFormats...)
+		return []string{}
 	}
 
 	normalized := make([]string, 0, len(values))
@@ -167,7 +167,7 @@ func normalizeOutputFormats(values []string) []string {
 		normalized = append(normalized, value)
 	}
 	if len(normalized) == 0 {
-		return append([]string{}, defaultBotOutputFormats...)
+		return []string{}
 	}
 	return normalized
 }

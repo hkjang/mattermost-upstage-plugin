@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/textproto"
 	"net/url"
 	"strconv"
 	"strings"
@@ -58,13 +59,41 @@ type upstageDocumentResult struct {
 }
 
 type upstageCallError struct {
-	Code       string
-	Summary    string
-	Detail     string
-	Hint       string
-	RequestURL string
-	StatusCode int
-	Retryable  bool
+	Code        string
+	Summary     string
+	Detail      string
+	Hint        string
+	RequestURL  string
+	StatusCode  int
+	Retryable   bool
+	InputDebug  string
+	OutputDebug string
+}
+
+type upstageRequestDebug struct {
+	URL         string                 `json:"url"`
+	AuthMode    string                 `json:"auth_mode"`
+	Fields      map[string]string      `json:"fields"`
+	Attachment  upstageAttachmentDebug `json:"attachment"`
+	Correlation string                 `json:"correlation_id,omitempty"`
+	Attempt     string                 `json:"attempt,omitempty"`
+}
+
+type upstageAttachmentDebug struct {
+	Name      string `json:"name"`
+	MIMEType  string `json:"mime_type"`
+	Extension string `json:"extension,omitempty"`
+	Size      int64  `json:"size"`
+}
+
+type upstageResponseDebug struct {
+	StatusCode int    `json:"status_code,omitempty"`
+	RequestID  string `json:"request_id,omitempty"`
+	ErrorCode  string `json:"error_code,omitempty"`
+	Summary    string `json:"summary,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+	Hint       string `json:"hint,omitempty"`
+	Body       string `json:"body,omitempty"`
 }
 
 func (e *upstageCallError) Error() string {
@@ -84,9 +113,6 @@ func (e *upstageCallError) Error() string {
 	}
 	if e.StatusCode > 0 {
 		lines = append(lines, fmt.Sprintf("HTTP 상태: %d", e.StatusCode))
-	}
-	if e.RequestURL != "" {
-		lines = append(lines, "요청 URL: "+e.RequestURL)
 	}
 
 	return strings.Join(lines, "\n")
@@ -181,20 +207,48 @@ func (p *Plugin) invokeUpstageDocumentParse(
 	attachment botAttachment,
 	correlationID string,
 ) (upstageDocumentResult, int, error) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-
 	fields, err := buildUpstageFormFields(bot)
 	if err != nil {
 		return upstageDocumentResult{}, 0, err
 	}
+
+	result, statusCode, err := p.performUpstageDocumentParseRequest(ctx, service, bot, attachment, correlationID, fields, "")
+	if err == nil || statusCode != http.StatusBadRequest || strings.TrimSpace(fields["output_formats"]) == "" {
+		return result, statusCode, err
+	}
+
+	retryFields := cloneUpstageFields(fields)
+	delete(retryFields, "output_formats")
+
+	retryResult, retryStatus, retryErr := p.performUpstageDocumentParseRequest(ctx, service, bot, attachment, correlationID, retryFields, "retry_without_output_formats")
+	if retryErr == nil {
+		p.API.LogWarn("Upstage request succeeded after retrying without output_formats", "correlation_id", correlationID, "bot_id", bot.ID, "filename", sanitizeUploadFilename(attachment.Name))
+		return retryResult, retryStatus, nil
+	}
+
+	return retryResult, retryStatus, retryErr
+}
+
+func (p *Plugin) performUpstageDocumentParseRequest(
+	ctx context.Context,
+	service upstageServiceConfig,
+	bot BotDefinition,
+	attachment botAttachment,
+	correlationID string,
+	fields map[string]string,
+	attempt string,
+) (upstageDocumentResult, int, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	requestDebug := buildUpstageRequestDebug(service, fields, attachment, correlationID, attempt)
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {
 			return upstageDocumentResult{}, 0, fmt.Errorf("failed to write %s field: %w", key, err)
 		}
 	}
 
-	part, err := writer.CreateFormFile("document", sanitizeUploadFilename(attachment.Name))
+	part, err := createDocumentPart(writer, attachment)
 	if err != nil {
 		return upstageDocumentResult{}, 0, fmt.Errorf("failed to create document form field: %w", err)
 	}
@@ -217,13 +271,17 @@ func (p *Plugin) invokeUpstageDocumentParse(
 	client := &http.Client{Timeout: 2 * time.Minute}
 	response, err := client.Do(request)
 	if err != nil {
-		return upstageDocumentResult{}, 0, classifyUpstageRequestError(service.BaseURL, err)
+		return upstageDocumentResult{}, 0, attachUpstageDebug(
+			classifyUpstageRequestError(service.BaseURL, err),
+			requestDebug,
+			upstageResponseDebug{},
+		)
 	}
 	defer response.Body.Close()
 
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, 8*1024*1024))
 	if err != nil {
-		return upstageDocumentResult{}, response.StatusCode, newUpstageCallError(
+		callErr := newUpstageCallError(
 			"response_read_failed",
 			"Upstage 응답 본문을 읽는 중 오류가 발생했습니다.",
 			err.Error(),
@@ -232,14 +290,23 @@ func (p *Plugin) invokeUpstageDocumentParse(
 			response.StatusCode,
 			true,
 		)
+		return upstageDocumentResult{}, response.StatusCode, callErr.withDebug(
+			requestDebug,
+			buildUpstageResponseDebug(response.StatusCode, response.Header, nil, callErr),
+		)
 	}
 	if response.StatusCode >= http.StatusBadRequest {
-		return upstageDocumentResult{}, response.StatusCode, classifyUpstageHTTPError(service.BaseURL, response.StatusCode, response.Header, responseBody)
+		callErr := classifyUpstageHTTPError(service.BaseURL, response.StatusCode, response.Header, responseBody)
+		return upstageDocumentResult{}, response.StatusCode, attachUpstageDebug(
+			callErr,
+			requestDebug,
+			buildUpstageResponseDebug(response.StatusCode, response.Header, responseBody, callErr),
+		)
 	}
 
 	var parsed upstageParseResponse
 	if err := json.Unmarshal(responseBody, &parsed); err != nil {
-		return upstageDocumentResult{}, response.StatusCode, newUpstageCallError(
+		callErr := newUpstageCallError(
 			"decode_failed",
 			"Upstage 응답 JSON을 해석하지 못했습니다.",
 			err.Error(),
@@ -247,6 +314,10 @@ func (p *Plugin) invokeUpstageDocumentParse(
 			service.BaseURL,
 			response.StatusCode,
 			false,
+		)
+		return upstageDocumentResult{}, response.StatusCode, callErr.withDebug(
+			requestDebug,
+			buildUpstageResponseDebug(response.StatusCode, response.Header, responseBody, callErr),
 		)
 	}
 	if strings.TrimSpace(parsed.Model) == "" {
@@ -305,6 +376,18 @@ func formatUpstageListField(values []string) (string, error) {
 		return "", err
 	}
 	return string(raw), nil
+}
+
+func createDocumentPart(writer *multipart.Writer, attachment botAttachment) (io.Writer, error) {
+	headers := make(textproto.MIMEHeader)
+	headers.Set("Content-Disposition", fmt.Sprintf(`form-data; name="document"; filename="%s"`, escapeMultipartValue(sanitizeUploadFilename(attachment.Name))))
+	headers.Set("Content-Type", defaultIfEmpty(strings.TrimSpace(attachment.MIMEType), "application/octet-stream"))
+	return writer.CreatePart(headers)
+}
+
+func escapeMultipartValue(value string) string {
+	replacer := strings.NewReplacer("\\", "\\\\", `"`, "\\\"")
+	return replacer.Replace(value)
 }
 
 func choosePreferredUpstageContent(response upstageParseResponse, preferred []string) (string, string) {
@@ -499,6 +582,103 @@ func minDuration(values ...time.Duration) time.Duration {
 		}
 	}
 	return minimum
+}
+
+func cloneUpstageFields(fields map[string]string) map[string]string {
+	cloned := make(map[string]string, len(fields))
+	for key, value := range fields {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func buildUpstageRequestDebug(service upstageServiceConfig, fields map[string]string, attachment botAttachment, correlationID, attempt string) upstageRequestDebug {
+	copiedFields := make(map[string]string, len(fields))
+	for key, value := range fields {
+		copiedFields[key] = value
+	}
+
+	extension := ""
+	if index := strings.LastIndex(strings.TrimSpace(attachment.Name), "."); index >= 0 {
+		extension = strings.ToLower(strings.TrimSpace(attachment.Name[index:]))
+	}
+
+	return upstageRequestDebug{
+		URL:      strings.TrimSpace(service.BaseURL),
+		AuthMode: strings.TrimSpace(service.AuthMode),
+		Fields:   copiedFields,
+		Attachment: upstageAttachmentDebug{
+			Name:      sanitizeUploadFilename(attachment.Name),
+			MIMEType:  strings.TrimSpace(attachment.MIMEType),
+			Extension: extension,
+			Size:      int64(len(attachment.Content)),
+		},
+		Correlation: strings.TrimSpace(correlationID),
+		Attempt:     strings.TrimSpace(attempt),
+	}
+}
+
+func buildUpstageResponseDebug(statusCode int, headers http.Header, body []byte, callErr *upstageCallError) upstageResponseDebug {
+	responseDebug := upstageResponseDebug{
+		StatusCode: statusCode,
+		RequestID:  firstHeaderValue(headers, "X-Request-Id", "X-Request-ID", "X-Correlation-ID"),
+		Body:       formatUpstageDebugBody(body),
+	}
+	if callErr != nil {
+		responseDebug.ErrorCode = strings.TrimSpace(callErr.Code)
+		responseDebug.Summary = strings.TrimSpace(callErr.Summary)
+		responseDebug.Detail = strings.TrimSpace(callErr.Detail)
+		responseDebug.Hint = strings.TrimSpace(callErr.Hint)
+	}
+	return responseDebug
+}
+
+func formatUpstageDebugBody(body []byte) string {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return ""
+	}
+
+	var payload any
+	if err := json.Unmarshal(trimmed, &payload); err == nil {
+		pretty, marshalErr := json.MarshalIndent(payload, "", "  ")
+		if marshalErr == nil {
+			return truncateString(string(pretty), 16*1024)
+		}
+	}
+
+	return truncateString(string(trimmed), 16*1024)
+}
+
+func attachUpstageDebug(err error, requestDebug upstageRequestDebug, responseDebug upstageResponseDebug) error {
+	if err == nil {
+		return nil
+	}
+
+	var callErr *upstageCallError
+	if errors.As(err, &callErr) {
+		return callErr.withDebug(requestDebug, responseDebug)
+	}
+	return err
+}
+
+func (e *upstageCallError) withDebug(requestDebug upstageRequestDebug, responseDebug upstageResponseDebug) *upstageCallError {
+	if e == nil {
+		return nil
+	}
+
+	copyErr := *e
+	copyErr.InputDebug = marshalUpstageDebugPayload(requestDebug)
+	copyErr.OutputDebug = marshalUpstageDebugPayload(responseDebug)
+	return &copyErr
+}
+
+func marshalUpstageDebugPayload(payload any) string {
+	raw, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
 func newUpstageCallError(code, summary, detail, hint, requestURL string, statusCode int, retryable bool) *upstageCallError {

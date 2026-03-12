@@ -45,14 +45,16 @@ type BotRunResult struct {
 }
 
 type executionFailureView struct {
-	HasFailure bool
-	Message    string
-	ErrorCode  string
-	Detail     string
-	Hint       string
-	RequestURL string
-	HTTPStatus int
-	Retryable  bool
+	HasFailure  bool
+	Message     string
+	ErrorCode   string
+	Detail      string
+	Hint        string
+	RequestURL  string
+	HTTPStatus  int
+	Retryable   bool
+	InputDebug  string
+	OutputDebug string
 }
 
 const upstageBotPostType = "custom_upstage_bot"
@@ -420,6 +422,8 @@ func (p *Plugin) postFailure(channel *model.Channel, rootID string, account botA
 			"upstage_model":           account.Definition.Model,
 			"upstage_error":           "true",
 			"upstage_error_code":      failure.ErrorCode,
+			"upstage_error_input":     failure.InputDebug,
+			"upstage_error_output":    failure.OutputDebug,
 			"upstage_document_parser": "true",
 		},
 	})
@@ -500,14 +504,16 @@ func describeExecutionFailure(err error, defaultRetryable bool) executionFailure
 	var callErr *upstageCallError
 	if errors.As(err, &callErr) {
 		return executionFailureView{
-			HasFailure: true,
-			Message:    callErr.Error(),
-			ErrorCode:  callErr.Code,
-			Detail:     callErr.Detail,
-			Hint:       callErr.Hint,
-			RequestURL: callErr.RequestURL,
-			HTTPStatus: callErr.StatusCode,
-			Retryable:  callErr.Retryable,
+			HasFailure:  true,
+			Message:     callErr.Error(),
+			ErrorCode:   callErr.Code,
+			Detail:      callErr.Detail,
+			Hint:        callErr.Hint,
+			RequestURL:  callErr.RequestURL,
+			HTTPStatus:  callErr.StatusCode,
+			Retryable:   callErr.Retryable,
+			InputDebug:  callErr.InputDebug,
+			OutputDebug: callErr.OutputDebug,
 		}
 	}
 
@@ -535,11 +541,11 @@ func buildBotFailureMessage(bot BotDefinition, correlationID string, failure exe
 	if failure.HTTPStatus > 0 && !strings.Contains(failure.Message, "HTTP 상태:") {
 		lines = append(lines, "", fmt.Sprintf("HTTP 상태: `%d`", failure.HTTPStatus))
 	}
-	if failure.RequestURL != "" && !strings.Contains(failure.Message, "요청 URL:") {
-		lines = append(lines, "", "요청 URL: "+failure.RequestURL)
-	}
 	if failure.Retryable {
 		lines = append(lines, "", "_재시도 가능:_ 예")
+	}
+	if failure.InputDebug != "" || failure.OutputDebug != "" {
+		lines = append(lines, "", "_상단 버튼에서 요청/응답 파라미터를 볼 수 있습니다._")
 	}
 	lines = append(lines, "", fmt.Sprintf("_Correlation ID:_ `%s`", correlationID))
 	return strings.TrimSpace(strings.Join(lines, "\n"))

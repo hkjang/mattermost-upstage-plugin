@@ -6,7 +6,7 @@ import {getAdminConfig, getStatus, testConnection} from '../client';
 
 const defaultURL = 'https://api.upstage.ai/v1/document-digitization';
 const defaultModel = 'document-parse';
-const defaultFormats = ['markdown', 'text'];
+const defaultFormats: string[] = [];
 
 type DraftBot = {
     local_id: string;
@@ -55,7 +55,7 @@ const note: React.CSSProperties = {fontSize: 12, opacity: 0.75};
 const box: React.CSSProperties = {padding: 12, borderRadius: 8, background: 'rgba(var(--button-bg-rgb),.08)', border: '1px solid rgba(var(--button-bg-rgb),.18)'};
 
 const sampleBots: Partial<BotDefinition>[] = [
-    {username: 'upstage-parser', display_name: '문서 파서 기본', description: '기본 파서 봇', model: defaultModel, mode: 'standard', ocr: 'auto', output_formats: ['markdown', 'text'], coordinates: true, chart_recognition: true, merge_multipage_tables: false},
+    {username: 'upstage-parser', display_name: '문서 파서 기본', description: '기본 파서 봇', model: defaultModel, mode: 'standard', ocr: 'auto', output_formats: [], coordinates: true, chart_recognition: true, merge_multipage_tables: false},
     {username: 'upstage-html', display_name: '문서 파서 HTML', description: 'HTML 출력 강화 봇', model: defaultModel, mode: 'enhanced', ocr: 'force', output_formats: ['html', 'markdown', 'text'], coordinates: true, chart_recognition: true, merge_multipage_tables: true},
 ];
 
@@ -120,6 +120,7 @@ function renderPlaceholder(args: any) {
                 <div>{'봇은 DM 또는 @멘션 + 파일 첨부로 호출됩니다.'}</div>
                 <div>{'메시지 본문은 Upstage API로 전달되지 않습니다. 실제 요청은 첨부 파일만 document 파트로 업로드합니다.'}</div>
                 <div>{'base64_encoding은 업로드 이미지 자체가 아니라, 응답에 base64로 포함할 레이아웃 카테고리(table 등)를 지정하는 옵션입니다.'}</div>
+                <div>{'output_formats를 비워 두면 Upstage API 기본 출력 형식을 사용합니다.'}</div>
             </div>
             {source === 'legacy' && <div style={box}>{'기존 개별 설정을 불러왔습니다. 저장하면 단일 Config 형식으로 정리됩니다.'}</div>}
             {props.setByEnv && <div style={box}>{'이 설정은 환경 변수로 관리되고 있어 여기에서 수정할 수 없습니다.'}</div>}
@@ -188,7 +189,7 @@ function renderPlaceholder(args: any) {
                             <Field label={'ocr'}><select disabled={disabled} style={field} value={bot.ocr} onChange={(e) => updateBot(bot.local_id, {ocr: ocr(e.target.value)})}><option value='auto'>{'auto'}</option><option value='force'>{'force'}</option></select></Field>
                         </div>
                         <div style={row2}>
-                            <Field label={'output_formats'}><input disabled={disabled} style={field} value={join(bot.output_formats)} placeholder={'markdown, text, html'} onChange={(e) => updateBot(bot.local_id, {output_formats: formats(split(e.target.value, true))})}/></Field>
+                            <Field label={'output_formats'}><input disabled={disabled} style={field} value={join(bot.output_formats)} placeholder={'비워 두면 API 기본값 사용'} onChange={(e) => updateBot(bot.local_id, {output_formats: formats(split(e.target.value, true))})}/></Field>
                             <Field label={'base64_encoding'}><input disabled={disabled} style={field} value={join(bot.base64_encoding)} placeholder={'table'} onChange={(e) => updateBot(bot.local_id, {base64_encoding: split(e.target.value, true)})}/></Field>
                         </div>
                         <div style={row2}>
@@ -364,8 +365,30 @@ function validate(config: DraftConfig) {
 }
 
 function curl(config: DraftConfig, bot: DraftBot) {
-    const authLine = (bot.auth_mode || config.service.auth_mode) === 'x-api-key' ? '  -H "x-api-key: $UPSTAGE_API_KEY" \\' : '  -H "Authorization: Bearer $UPSTAGE_API_KEY" \\';
-    return [`curl -X POST "${bot.base_url || config.service.base_url || defaultURL}" \\`, authLine, '  -H "Accept: application/json" \\', `  -F "model=${bot.model || defaultModel}" \\`, '  -F "document=@example.pdf" \\', `  -F "mode=${mode(bot.mode)}" \\`, `  -F "ocr=${ocr(bot.ocr)}" \\`, `  -F "output_formats=${JSON.stringify(formats(bot.output_formats))}" \\`, `  -F "coordinates=${String(bot.coordinates)}" \\`, `  -F "chart_recognition=${String(bot.chart_recognition)}" \\`, `  -F "merge_multipage_tables=${String(bot.merge_multipage_tables)}"`].join('\n');
+    const authLine = (bot.auth_mode || config.service.auth_mode) === 'x-api-key' ? '-H "x-api-key: $UPSTAGE_API_KEY"' : '-H "Authorization: Bearer $UPSTAGE_API_KEY"';
+    const lines = [`curl -X POST "${bot.base_url || config.service.base_url || defaultURL}"`, authLine, '-H "Accept: application/json"', `-F "model=${bot.model || defaultModel}"`, '-F "document=@example.pdf"'];
+    if (mode(bot.mode) !== 'standard') {
+        lines.push(`-F "mode=${mode(bot.mode)}"`);
+    }
+    if (ocr(bot.ocr) !== 'auto') {
+        lines.push(`-F "ocr=${ocr(bot.ocr)}"`);
+    }
+    if (formats(bot.output_formats).length > 0) {
+        lines.push(`-F "output_formats=${JSON.stringify(formats(bot.output_formats))}"`);
+    }
+    if (!bot.coordinates) {
+        lines.push(`-F "coordinates=${String(bot.coordinates)}"`);
+    }
+    if (!bot.chart_recognition) {
+        lines.push(`-F "chart_recognition=${String(bot.chart_recognition)}"`);
+    }
+    if (bot.merge_multipage_tables) {
+        lines.push(`-F "merge_multipage_tables=${String(bot.merge_multipage_tables)}"`);
+    }
+    return lines.map((line, index) => {
+        const prefix = index === 0 ? '' : '  ';
+        return index < lines.length - 1 ? `${prefix}${line} \\` : `${prefix}${line}`;
+    }).join('\n');
 }
 
 function emptyBot(): DraftBot {
@@ -387,4 +410,4 @@ function user(value: string) { return value.toLowerCase().replace(/[^a-z0-9-_]/g
 function id(prefix: string) { return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? `${prefix}-${crypto.randomUUID()}` : `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`; }
 function join(values: string[]) { return values.join(', '); }
 function split(value: string, lower = false) { return value.split(/[\r\n,]+/).map((item) => lower ? item.trim().toLowerCase() : item.trim()).filter(Boolean).filter((item, index, all) => all.indexOf(item) === index); }
-function formats(values: unknown) { const allowed = new Set(['html', 'markdown', 'text']); const next = (Array.isArray(values) ? values : []).map((item) => text(item).trim().toLowerCase()).filter((item) => allowed.has(item)).filter((item, index, all) => all.indexOf(item) === index); return next.length > 0 ? next : [...defaultFormats]; }
+function formats(values: unknown) { const allowed = new Set(['html', 'markdown', 'text']); return (Array.isArray(values) ? values : []).map((item) => text(item).trim().toLowerCase()).filter((item) => allowed.has(item)).filter((item, index, all) => all.indexOf(item) === index); }

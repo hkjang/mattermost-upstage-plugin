@@ -48,22 +48,131 @@ const spinnerStyle: React.CSSProperties = {
     width: '10px',
 };
 
+const toolbarStyle: React.CSSProperties = {
+    alignItems: 'center',
+    display: 'flex',
+    gap: '8px',
+};
+
+const buttonStyle: React.CSSProperties = {
+    background: 'rgba(var(--button-bg-rgb), 0.12)',
+    border: '1px solid rgba(var(--button-bg-rgb), 0.28)',
+    borderRadius: '999px',
+    color: 'rgb(var(--button-bg-rgb))',
+    cursor: 'pointer',
+    fontSize: '12px',
+    fontWeight: 600,
+    padding: '6px 12px',
+};
+
+const modalBackdropStyle: React.CSSProperties = {
+    alignItems: 'center',
+    background: 'rgba(0, 0, 0, 0.44)',
+    bottom: 0,
+    display: 'flex',
+    justifyContent: 'center',
+    left: 0,
+    padding: '24px',
+    position: 'fixed',
+    right: 0,
+    top: 0,
+    zIndex: 2147483000,
+};
+
+const modalCardStyle: React.CSSProperties = {
+    background: 'var(--center-channel-bg)',
+    border: '1px solid rgba(var(--center-channel-color-rgb), 0.12)',
+    borderRadius: '12px',
+    boxShadow: '0 16px 48px rgba(0, 0, 0, 0.24)',
+    color: 'rgb(var(--center-channel-color-rgb))',
+    display: 'flex',
+    flexDirection: 'column',
+    maxHeight: 'calc(100vh - 48px)',
+    overflow: 'hidden',
+    width: 'min(960px, calc(100vw - 32px))',
+};
+
+const modalHeaderStyle: React.CSSProperties = {
+    alignItems: 'center',
+    borderBottom: '1px solid rgba(var(--center-channel-color-rgb), 0.12)',
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '12px',
+    padding: '16px 20px',
+};
+
+const modalBodyStyle: React.CSSProperties = {
+    display: 'grid',
+    gap: '16px',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+    overflowY: 'auto',
+    padding: '20px',
+};
+
+const debugPanelStyle: React.CSSProperties = {
+    background: 'rgba(var(--center-channel-color-rgb), 0.04)',
+    border: '1px solid rgba(var(--center-channel-color-rgb), 0.08)',
+    borderRadius: '10px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    minHeight: 0,
+    padding: '16px',
+};
+
+const debugPreStyle: React.CSSProperties = {
+    background: 'rgba(var(--center-channel-color-rgb), 0.04)',
+    borderRadius: '8px',
+    fontSize: '12px',
+    margin: 0,
+    maxHeight: '52vh',
+    minHeight: '160px',
+    overflow: 'auto',
+    padding: '12px',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+};
+
 export default function UpstageBotPost(props: Props) {
     const [message, setMessage] = useState(getRenderableMessage(props.post));
     const [generating, setGenerating] = useState(isStreamingPost(props.post));
     const [precontent, setPrecontent] = useState(isUpstageAwaitingFirstChunk(props.post));
+    const [showDebugModal, setShowDebugModal] = useState(false);
     const listenerID = useRef(`upstage-${Math.random().toString(36).slice(2)}`);
+    const isErrorPost = props.post?.props?.upstage_error === 'true';
+    const inputDebug = normalizeDebugPayload(props.post?.props?.upstage_error_input);
+    const outputDebug = normalizeDebugPayload(props.post?.props?.upstage_error_output);
+    const canShowDebug = isErrorPost && (inputDebug !== '' || outputDebug !== '');
 
     useEffect(() => {
         setMessage(getRenderableMessage(props.post));
         setGenerating(isStreamingPost(props.post));
         setPrecontent(isUpstageAwaitingFirstChunk(props.post));
+        setShowDebugModal(false);
     }, [
+        props.post.id,
         props.post.message,
         props.post.props?.upstage_streaming,
         props.post.props?.upstage_stream_status,
         props.post.props?.upstage_stream_placeholder,
+        props.post.props?.upstage_error_input,
+        props.post.props?.upstage_error_output,
     ]);
+
+    useEffect(() => {
+        if (!showDebugModal) {
+            return undefined;
+        }
+
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                setShowDebugModal(false);
+            }
+        };
+
+        document.addEventListener('keydown', onKeyDown);
+        return () => document.removeEventListener('keydown', onKeyDown);
+    }, [showDebugModal]);
 
     const listener = useMemo(() => {
         return (msg: WebSocketMessage<PostUpdateData>) => {
@@ -105,6 +214,17 @@ export default function UpstageBotPost(props: Props) {
             data-testid='upstage-bot-post'
             style={containerStyle}
         >
+            {canShowDebug && (
+                <div style={toolbarStyle}>
+                    <button
+                        style={buttonStyle}
+                        type='button'
+                        onClick={() => setShowDebugModal(true)}
+                    >
+                        {'요청/응답 파라미터 보기'}
+                    </button>
+                </div>
+            )}
             {precontent && (
                 <span style={precontentStyle}>
                     <span style={spinnerStyle}/>
@@ -122,6 +242,45 @@ export default function UpstageBotPost(props: Props) {
                     {'응답 생성 중...'}
                 </span>
             )}
+            {showDebugModal && canShowDebug && (
+                <div
+                    aria-modal='true'
+                    role='dialog'
+                    style={modalBackdropStyle}
+                    onClick={() => setShowDebugModal(false)}
+                >
+                    <div
+                        style={modalCardStyle}
+                        onClick={(event) => event.stopPropagation()}
+                    >
+                        <div style={modalHeaderStyle}>
+                            <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
+                                <strong>{'Upstage 요청/응답 파라미터'}</strong>
+                                <span style={statusStyle}>
+                                    {`Correlation ID: ${props.post?.props?.upstage_correlation_id || '-'}`}
+                                </span>
+                            </div>
+                            <button
+                                style={buttonStyle}
+                                type='button'
+                                onClick={() => setShowDebugModal(false)}
+                            >
+                                {'닫기'}
+                            </button>
+                        </div>
+                        <div style={modalBodyStyle}>
+                            <section style={debugPanelStyle}>
+                                <strong>{'Input Parameters'}</strong>
+                                <pre style={debugPreStyle}>{inputDebug || '{}'}</pre>
+                            </section>
+                            <section style={debugPanelStyle}>
+                                <strong>{'Output Parameters'}</strong>
+                                <pre style={debugPreStyle}>{outputDebug || '{}'}</pre>
+                            </section>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
@@ -136,4 +295,12 @@ function getRenderableMessage(post: any) {
     }
 
     return post?.message || '';
+}
+
+function normalizeDebugPayload(value: unknown) {
+    if (typeof value !== 'string') {
+        return '';
+    }
+
+    return value.trim();
 }

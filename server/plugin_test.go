@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"mime/multipart"
 	"net/url"
 	"testing"
 
@@ -141,8 +144,7 @@ func TestBuildUpstageFormFieldsUsesMinimalDefaults(t *testing.T) {
 	fields, err := buildUpstageFormFields(bot)
 	require.NoError(t, err)
 	require.Equal(t, map[string]string{
-		"model":          defaultUpstageModel,
-		"output_formats": `["markdown","text"]`,
+		"model": defaultUpstageModel,
 	}, fields)
 }
 
@@ -225,6 +227,26 @@ func TestClassifyUpstageRequestErrorTimeout(t *testing.T) {
 	require.Equal(t, "network_timeout", err.Code)
 	require.True(t, err.Retryable)
 	require.Contains(t, err.Error(), "시간 초과")
+}
+
+func TestCreateDocumentPartUsesDetectedMimeType(t *testing.T) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	part, err := createDocumentPart(writer, botAttachment{
+		Name:     "sample.png",
+		MIMEType: "image/png",
+		Content:  []byte("png"),
+	})
+	require.NoError(t, err)
+
+	_, err = io.WriteString(part, "payload")
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	payload := body.String()
+	require.Contains(t, payload, `name="document"; filename="sample.png"`)
+	require.Contains(t, payload, "Content-Type: image/png")
 }
 
 func TestExtractPromptFromMessageTriggersFileOnlyDirectMessages(t *testing.T) {
