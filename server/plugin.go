@@ -154,32 +154,31 @@ func (p *Plugin) handlePostedMessage(post *model.Post) error {
 
 func (p *Plugin) extractPromptFromMessage(cfg *runtimeConfiguration, channel *model.Channel, message string) (*BotDefinition, string, bool) {
 	message = strings.TrimSpace(message)
-	if message == "" {
-		return nil, "", false
-	}
 
 	type mentionMatch struct {
 		Bot   BotDefinition
 		Index int
 	}
 
-	matches := make([]mentionMatch, 0, len(cfg.BotDefinitions))
-	lowerMessage := strings.ToLower(message)
-	for _, bot := range cfg.BotDefinitions {
-		mention := "@" + bot.Username
-		if index := strings.Index(lowerMessage, mention); index >= 0 {
-			matches = append(matches, mentionMatch{Bot: bot, Index: index})
+	if message != "" {
+		matches := make([]mentionMatch, 0, len(cfg.BotDefinitions))
+		lowerMessage := strings.ToLower(message)
+		for _, bot := range cfg.BotDefinitions {
+			mention := "@" + bot.Username
+			if index := strings.Index(lowerMessage, mention); index >= 0 {
+				matches = append(matches, mentionMatch{Bot: bot, Index: index})
+			}
 		}
-	}
 
-	if len(matches) > 0 {
-		sort.Slice(matches, func(i, j int) bool {
-			return matches[i].Index < matches[j].Index
-		})
-		match := matches[0]
-		mentionLength := len(match.Bot.Username) + 1
-		prompt := strings.TrimSpace(strings.TrimSpace(message[:match.Index]) + " " + strings.TrimSpace(message[match.Index+mentionLength:]))
-		return &match.Bot, prompt, true
+		if len(matches) > 0 {
+			sort.Slice(matches, func(i, j int) bool {
+				return matches[i].Index < matches[j].Index
+			})
+			match := matches[0]
+			mentionLength := len(match.Bot.Username) + 1
+			prompt := strings.TrimSpace(strings.TrimSpace(message[:match.Index]) + " " + strings.TrimSpace(message[match.Index+mentionLength:]))
+			return &match.Bot, prompt, true
+		}
 	}
 
 	if channel != nil && channel.Type == model.ChannelTypeDirect {
@@ -190,6 +189,10 @@ func (p *Plugin) extractPromptFromMessage(cfg *runtimeConfiguration, channel *mo
 				return &bot, message, true
 			}
 		}
+	}
+
+	if message == "" {
+		return nil, "", false
 	}
 
 	return nil, "", false
@@ -210,7 +213,7 @@ func buildBotPromptMessage(bot BotDefinition) string {
 	lines := []string{
 		fmt.Sprintf("`@%s` 는 Upstage Document Parsing `%s` 를 사용합니다.", bot.Username, bot.Model),
 		"",
-		"문서 파일을 같이 첨부한 뒤 메시지를 보내 주세요.",
+		"문서 파일만 보내거나, 파일과 함께 메시지를 보내 주세요.",
 		"",
 		"예시:",
 	}

@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/mattermost/mattermost/server/public/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -224,4 +225,46 @@ func TestClassifyUpstageRequestErrorTimeout(t *testing.T) {
 	require.Equal(t, "network_timeout", err.Code)
 	require.True(t, err.Retryable)
 	require.Contains(t, err.Error(), "시간 초과")
+}
+
+func TestExtractPromptFromMessageTriggersFileOnlyDirectMessages(t *testing.T) {
+	bot, err := (BotDefinition{Username: "parser-bot", DisplayName: "Parser Bot"}).normalize()
+	require.NoError(t, err)
+
+	plugin := &Plugin{}
+	plugin.setBotAccounts(map[string]botAccount{
+		bot.ID: {
+			Definition: bot,
+			UserID:     "bot-user-id",
+		},
+	})
+
+	cfg := &runtimeConfiguration{BotDefinitions: []BotDefinition{bot}}
+	channel := &model.Channel{
+		Type: model.ChannelTypeDirect,
+		Name: "bot-user-id__human-user-id",
+	}
+
+	triggeredBot, prompt, triggered := plugin.extractPromptFromMessage(cfg, channel, "")
+	require.True(t, triggered)
+	require.NotNil(t, triggeredBot)
+	require.Equal(t, bot.ID, triggeredBot.ID)
+	require.Empty(t, prompt)
+}
+
+func TestExtractPromptFromMessageIgnoresEmptyNonDirectMessages(t *testing.T) {
+	bot, err := (BotDefinition{Username: "parser-bot", DisplayName: "Parser Bot"}).normalize()
+	require.NoError(t, err)
+
+	plugin := &Plugin{}
+	cfg := &runtimeConfiguration{BotDefinitions: []BotDefinition{bot}}
+	channel := &model.Channel{
+		Type: model.ChannelTypeOpen,
+		Name: "town-square",
+	}
+
+	triggeredBot, prompt, triggered := plugin.extractPromptFromMessage(cfg, channel, "")
+	require.False(t, triggered)
+	require.Nil(t, triggeredBot)
+	require.Empty(t, prompt)
 }
