@@ -86,7 +86,7 @@ func (p *Plugin) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	status.BotCount = len(runtimeCfg.BotDefinitions)
 	status.AllowHosts = runtimeCfg.AllowHosts
 	status.BaseURL = runtimeCfg.ServiceBaseURL
-	status.Bots = runtimeCfg.BotDefinitions
+	status.Bots = sanitizeBotDefinitions(runtimeCfg.BotDefinitions)
 	status.ManagedBots = status.BotSync.Entries
 	writeJSON(w, http.StatusOK, status)
 }
@@ -119,7 +119,7 @@ func (p *Plugin) handleBots(w http.ResponseWriter, r *http.Request) {
 
 	channelID := r.URL.Query().Get("channel_id")
 	if channelID == "" {
-		writeJSON(w, http.StatusOK, map[string]any{"bots": cfg.BotDefinitions})
+		writeJSON(w, http.StatusOK, map[string]any{"bots": sanitizeBotDefinitions(cfg.BotDefinitions)})
 		return
 	}
 
@@ -136,8 +136,16 @@ func (p *Plugin) handleBots(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"bots": cfg.getAllowedBots(user, channel, team),
+		"bots": sanitizeBotDefinitions(cfg.getAllowedBots(user, channel, team)),
 	})
+}
+
+func sanitizeBotDefinitions(bots []BotDefinition) []BotDefinition {
+	sanitized := make([]BotDefinition, 0, len(bots))
+	for _, bot := range bots {
+		sanitized = append(sanitized, bot.publicView())
+	}
+	return sanitized
 }
 
 func (p *Plugin) handleHistory(w http.ResponseWriter, r *http.Request) {

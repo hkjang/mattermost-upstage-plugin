@@ -85,7 +85,7 @@ export default function RHSPane() {
                 <select style={field} value={bot?.id || ''} onChange={(e) => setSelectedBotId(e.target.value)}>
                     {bots.map((item) => <option key={item.id} value={item.id}>{`${item.display_name || item.username} (@${item.username})`}</option>)}
                 </select>
-                <div style={{fontSize: 12, opacity: .8}}>{`Model: ${bot?.model || 'document-parse'} | mode=${bot?.mode || 'standard'} | ocr=${bot?.ocr || 'auto'}`}</div>
+                <div style={{fontSize: 12, opacity: .8}}>{`Model: ${bot?.model || 'document-parse'} | mode=${bot?.mode || 'standard'} | ocr=${bot?.ocr || 'auto'}${bot?.vllm_model ? ` | vLLM=${bot.vllm_model}` : ''}`}</div>
                 {bot?.description && <span style={{opacity: .8}}>{bot.description}</span>}
                 <div style={{fontSize: 12, opacity: .8}}>{selectedPostId ? (fileNames.length > 0 ? `첨부 파일: ${fileNames.join(', ')}` : '첨부 파일이 없습니다. 파일이 있는 포스트를 선택해 주세요.') : '포스트에서 RHS를 열면 해당 첨부 파일을 바로 파싱할 수 있습니다.'}</div>
                 <textarea style={{...field, resize: 'vertical'}} rows={5} value={prompt} placeholder={'예: 표를 markdown으로 정리해줘'} onChange={(e) => setPrompt(e.target.value)}/>

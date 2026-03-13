@@ -44,6 +44,16 @@ func TestParseBotDefinitionsPreservesEmptyBotAuthMode(t *testing.T) {
 	require.Equal(t, "", bots[0].AuthMode)
 }
 
+func TestParseBotDefinitionsIncludesVLLMAndMasking(t *testing.T) {
+	bots, err := parseBotDefinitions(`[{"username":"summary-bot","display_name":"Thread Summary","mask_sensitive_data":true,"vllm_base_url":"http://localhost:8000/v1","vllm_model":"Qwen/Qwen2.5-7B-Instruct","vllm_prompt":"{{document_text}}"}]`)
+	require.NoError(t, err)
+	require.Len(t, bots, 1)
+	require.True(t, bots[0].shouldMaskSensitiveData(false))
+	require.True(t, bots[0].hasVLLMPostProcess())
+	require.Equal(t, "http://localhost:8000/v1", bots[0].VLLMBaseURL)
+	require.Equal(t, "Qwen/Qwen2.5-7B-Instruct", bots[0].VLLMModel)
+}
+
 func TestConfigurationGetStoredPluginConfigDefaultsWhenEmpty(t *testing.T) {
 	cfg := &configuration{}
 	stored, source, err := cfg.getStoredPluginConfig()
@@ -121,6 +131,38 @@ func TestNormalizeUpstageEndpointURL(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			normalized, _, err := normalizeUpstageEndpointURL(testCase.input)
+			require.NoError(t, err)
+			require.Equal(t, testCase.expected, normalized)
+		})
+	}
+}
+
+func TestNormalizeVLLMEndpointURL(t *testing.T) {
+	testCases := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "root path",
+			input:    "http://localhost:8000",
+			expected: "http://localhost:8000/v1/chat/completions",
+		},
+		{
+			name:     "v1 root",
+			input:    "http://localhost:8000/v1",
+			expected: "http://localhost:8000/v1/chat/completions",
+		},
+		{
+			name:     "chat completions",
+			input:    "http://localhost:8000/v1/chat/completions",
+			expected: "http://localhost:8000/v1/chat/completions",
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			normalized, _, err := normalizeVLLMEndpointURL(testCase.input)
 			require.NoError(t, err)
 			require.Equal(t, testCase.expected, normalized)
 		})
@@ -302,6 +344,17 @@ func TestCreateDocumentPartUsesDetectedMimeType(t *testing.T) {
 	payload := body.String()
 	require.Contains(t, payload, `name="document"; filename="sample.png"`)
 	require.Contains(t, payload, "Content-Type: image/png")
+}
+
+func TestRenderVLLMPromptSupportsPlaceholders(t *testing.T) {
+	rendered := renderVLLMPrompt(
+		"사용자 요청:\n{{user_message}}\n\n문서:\n{{document_text}}",
+		"표를 요약해줘",
+		"문서 내용",
+	)
+
+	require.Contains(t, rendered, "표를 요약해줘")
+	require.Contains(t, rendered, "문서 내용")
 }
 
 func TestExtractPromptFromMessageTriggersFileOnlyDirectMessages(t *testing.T) {

@@ -22,6 +22,11 @@ export type BotDefinition = {
     chart_recognition?: boolean;
     merge_multipage_tables?: boolean;
     base64_encoding?: string[];
+    mask_sensitive_data?: boolean;
+    vllm_base_url?: string;
+    vllm_api_key?: string;
+    vllm_model?: string;
+    vllm_prompt?: string;
     allowed_teams?: string[];
     allowed_channels?: string[];
     allowed_users?: string[];

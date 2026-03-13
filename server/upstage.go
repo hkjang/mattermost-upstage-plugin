@@ -777,7 +777,7 @@ func buildUpstageResponseDebug(statusCode int, headers http.Header, body []byte,
 	responseDebug := upstageResponseDebug{
 		StatusCode: statusCode,
 		RequestID:  firstHeaderValue(headers, "X-Request-Id", "X-Request-ID", "X-Correlation-ID"),
-		Body:       formatUpstageDebugBody(body),
+		Body:       formatDebugBody(body),
 	}
 	if callErr != nil {
 		responseDebug.ErrorCode = strings.TrimSpace(callErr.Code)
@@ -788,7 +788,7 @@ func buildUpstageResponseDebug(statusCode int, headers http.Header, body []byte,
 	return responseDebug
 }
 
-func formatUpstageDebugBody(body []byte) string {
+func formatDebugBody(body []byte) string {
 	trimmed := bytes.TrimSpace(body)
 	if len(trimmed) == 0 {
 		return ""
@@ -838,12 +838,12 @@ func (e *upstageCallError) withDebug(requestDebug upstageRequestDebug, responseD
 	}
 
 	copyErr := *e
-	copyErr.InputDebug = marshalUpstageDebugPayload(requestDebug)
-	copyErr.OutputDebug = marshalUpstageDebugPayload(responseDebug)
+	copyErr.InputDebug = marshalDebugPayload(requestDebug)
+	copyErr.OutputDebug = marshalDebugPayload(responseDebug)
 	return &copyErr
 }
 
-func marshalUpstageDebugPayload(payload any) string {
+func marshalDebugPayload(payload any) string {
 	raw, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return ""
@@ -856,9 +856,9 @@ func marshalUpstageRequestDebugs(requestDebugs []upstageRequestDebug) string {
 	case 0:
 		return ""
 	case 1:
-		return marshalUpstageDebugPayload(requestDebugs[0])
+		return marshalDebugPayload(requestDebugs[0])
 	default:
-		return marshalUpstageDebugPayload(requestDebugs)
+		return marshalDebugPayload(requestDebugs)
 	}
 }
 

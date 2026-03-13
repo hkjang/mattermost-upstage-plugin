@@ -27,6 +27,11 @@ type BotDefinition struct {
 	ChartRecognition     *bool           `json:"chart_recognition,omitempty"`
 	MergeMultipageTables *bool           `json:"merge_multipage_tables,omitempty"`
 	Base64Encoding       []string        `json:"base64_encoding,omitempty"`
+	MaskSensitiveData    *bool           `json:"mask_sensitive_data,omitempty"`
+	VLLMBaseURL          string          `json:"vllm_base_url,omitempty"`
+	VLLMAPIKey           string          `json:"vllm_api_key,omitempty"`
+	VLLMModel            string          `json:"vllm_model,omitempty"`
+	VLLMPrompt           string          `json:"vllm_prompt,omitempty"`
 	FlowID               string          `json:"flow_id,omitempty"`
 	FileComponentID      string          `json:"file_component_id,omitempty"`
 	ImageComponentID     string          `json:"image_component_id,omitempty"`
@@ -62,6 +67,10 @@ func (b BotDefinition) normalize() (BotDefinition, error) {
 	b.OCR = normalizeUpstageOCRMode(b.OCR)
 	b.OutputFormats = normalizeOutputFormats(b.OutputFormats)
 	b.Base64Encoding = normalizeStringSlice(b.Base64Encoding)
+	b.VLLMBaseURL = strings.TrimSpace(b.VLLMBaseURL)
+	b.VLLMAPIKey = strings.TrimSpace(b.VLLMAPIKey)
+	b.VLLMModel = strings.TrimSpace(b.VLLMModel)
+	b.VLLMPrompt = strings.TrimSpace(b.VLLMPrompt)
 	b.FlowID = strings.TrimSpace(b.FlowID)
 	b.FileComponentID = strings.TrimSpace(b.FileComponentID)
 	b.ImageComponentID = strings.TrimSpace(b.ImageComponentID)
@@ -121,6 +130,24 @@ func (b BotDefinition) useChartRecognition() bool {
 
 func (b BotDefinition) useMergeMultipageTables() bool {
 	return b.MergeMultipageTables != nil && *b.MergeMultipageTables
+}
+
+func (b BotDefinition) shouldMaskSensitiveData(defaultValue bool) bool {
+	if b.MaskSensitiveData != nil {
+		return *b.MaskSensitiveData
+	}
+	return defaultValue
+}
+
+func (b BotDefinition) hasVLLMPostProcess() bool {
+	return b.VLLMBaseURL != "" && b.VLLMModel != ""
+}
+
+func (b BotDefinition) publicView() BotDefinition {
+	copyBot := b
+	copyBot.AuthToken = ""
+	copyBot.VLLMAPIKey = ""
+	return copyBot
 }
 
 func normalizeStringSlice(items []string) []string {

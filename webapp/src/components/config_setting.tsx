@@ -24,6 +24,11 @@ type DraftBot = {
     chart_recognition: boolean;
     merge_multipage_tables: boolean;
     base64_encoding: string[];
+    mask_sensitive_data: boolean;
+    vllm_base_url: string;
+    vllm_api_key: string;
+    vllm_model: string;
+    vllm_prompt: string;
     allowed_teams: string[];
     allowed_channels: string[];
     allowed_users: string[];
@@ -55,8 +60,8 @@ const note: React.CSSProperties = {fontSize: 12, opacity: 0.75};
 const box: React.CSSProperties = {padding: 12, borderRadius: 8, background: 'rgba(var(--button-bg-rgb),.08)', border: '1px solid rgba(var(--button-bg-rgb),.18)'};
 
 const sampleBots: Partial<BotDefinition>[] = [
-    {username: 'upstage-parser', display_name: '문서 파서 기본', description: '기본 파서 봇', model: defaultModel, mode: 'standard', ocr: 'auto', output_formats: [], coordinates: true, chart_recognition: true, merge_multipage_tables: false},
-    {username: 'upstage-html', display_name: '문서 파서 HTML', description: 'HTML 출력 강화 봇', model: defaultModel, mode: 'enhanced', ocr: 'force', output_formats: ['html', 'markdown', 'text'], coordinates: true, chart_recognition: true, merge_multipage_tables: true},
+    {username: 'upstage-parser', display_name: '문서 파서 기본', description: '기본 파서 봇', model: defaultModel, mode: 'standard', ocr: 'auto', output_formats: [], coordinates: true, chart_recognition: true, merge_multipage_tables: false, mask_sensitive_data: false},
+    {username: 'upstage-html', display_name: '문서 파서 HTML', description: 'HTML 출력 강화 봇', model: defaultModel, mode: 'enhanced', ocr: 'force', output_formats: ['html', 'markdown', 'text'], coordinates: true, chart_recognition: true, merge_multipage_tables: true, mask_sensitive_data: false},
 ];
 
 export default function ConfigSetting(props: Props) {
@@ -122,6 +127,7 @@ function renderPlaceholder(args: any) {
                 <div>{'메시지 본문은 Upstage API로 전달되지 않습니다. 실제 요청은 첨부 파일만 document 파트로 업로드합니다.'}</div>
                 <div>{'base64_encoding은 업로드 이미지 자체가 아니라, 응답에 base64로 포함할 레이아웃 카테고리(table 등)를 지정하는 옵션입니다.'}</div>
                 <div>{'output_formats를 비워 두면 Upstage API 기본 출력 형식을 사용합니다.'}</div>
+                <div>{'봇별 vLLM 후처리를 켜면 문서 파싱 결과와 사용자 메시지를 함께 vLLM에 보내 최종 응답을 생성합니다. 프롬프트에서 {{user_message}}, {{document_text}} 치환자를 사용할 수 있습니다.'}</div>
             </div>
             {source === 'legacy' && <div style={box}>{'기존 개별 설정을 불러왔습니다. 저장하면 단일 Config 형식으로 정리됩니다.'}</div>}
             {props.setByEnv && <div style={box}>{'이 설정은 환경 변수로 관리되고 있어 여기에서 수정할 수 없습니다.'}</div>}
@@ -151,10 +157,9 @@ function renderPlaceholder(args: any) {
                     <Field label={'최대 메시지 길이'}><input disabled={disabled} type='number' min={1} style={field} value={String(config.runtime.max_input_length)} onChange={(e) => updateRuntime({max_input_length: num(e.target.value, 4000)})}/></Field>
                     <Field label={'최대 응답 길이'}><input disabled={disabled} type='number' min={1} style={field} value={String(config.runtime.max_output_length)} onChange={(e) => updateRuntime({max_output_length: num(e.target.value, 8000)})}/></Field>
                 </div>
-                <label><input disabled={disabled} type='checkbox' checked={config.runtime.mask_sensitive_data} onChange={(e) => updateRuntime({mask_sensitive_data: e.target.checked})}/>{' 개인정보 마스킹'}</label>
                 <label><input disabled={disabled} type='checkbox' checked={config.runtime.enable_debug_logs} onChange={(e) => updateRuntime({enable_debug_logs: e.target.checked})}/>{' 디버그 로그'}</label>
                 <label><input disabled={disabled} type='checkbox' checked={config.runtime.enable_usage_logs} onChange={(e) => updateRuntime({enable_usage_logs: e.target.checked})}/>{' 사용량 로그'}</label>
-                <span style={note}>{'개인정보 마스킹을 켜면 문서 파싱 결과에 포함된 이메일, 전화번호, 주민등록번호 형태, 긴 숫자 식별자를 가려서 게시합니다.'}</span>
+                <span style={note}>{'개인정보 마스킹과 vLLM 후처리는 각 봇 설정에서 개별적으로 제어합니다. 허용 호스트에는 Upstage와 vLLM 호스트를 모두 넣을 수 있습니다.'}</span>
             </>}
         </section>
 
@@ -162,14 +167,14 @@ function renderPlaceholder(args: any) {
             <div style={{display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center'}}>
                 <strong>{'봇 카탈로그'}</strong>
                 <div style={{display: 'flex', gap: 8}}>
-                    <button className='btn btn-tertiary' disabled={disabled} type='button' onClick={() => apply({...config, bots: sampleBots.map((item, i) => normalizeBot(item, i))}, 'bot-0')}>{'예시 불러오기'}</button>
-                    <button className='btn btn-primary' disabled={disabled} type='button' onClick={() => { const next = emptyBot(); apply({...config, bots: [...config.bots, next]}, next.local_id); }}>{'봇 추가'}</button>
+                    <button className='btn btn-tertiary' disabled={disabled} type='button' onClick={() => apply({...config, bots: sampleBots.map((item, i) => normalizeBot(item, i, config.runtime.mask_sensitive_data))}, 'bot-0')}>{'예시 불러오기'}</button>
+                    <button className='btn btn-primary' disabled={disabled} type='button' onClick={() => { const next = emptyBot(config.runtime.mask_sensitive_data); apply({...config, bots: [...config.bots, next]}, next.local_id); }}>{'봇 추가'}</button>
                 </div>
             </div>
             <div style={botLayout}>
                 <div style={{display: 'flex', flexDirection: 'column', gap: 8}}>
                     {config.bots.length === 0 && <div style={box}>{'아직 등록된 봇이 없습니다.'}</div>}
-                    {config.bots.map((item: DraftBot) => <button key={item.local_id} type='button' onClick={() => setSelected(item.local_id)} style={{...box, textAlign: 'left', borderColor: bot?.local_id === item.local_id ? 'rgba(var(--button-bg-rgb),.5)' : 'transparent'}}><strong>{item.display_name || '@new-bot'}</strong><div>{`@${item.username || 'username'}`}</div><div style={note}>{`${item.model} | ${item.mode}`}</div></button>)}
+                    {config.bots.map((item: DraftBot) => <button key={item.local_id} type='button' onClick={() => setSelected(item.local_id)} style={{...box, textAlign: 'left', borderColor: bot?.local_id === item.local_id ? 'rgba(var(--button-bg-rgb),.5)' : 'transparent'}}><strong>{item.display_name || '@new-bot'}</strong><div>{`@${item.username || 'username'}`}</div><div style={note}>{`${item.model} | ${item.mode}${item.vllm_model ? ` | vLLM=${item.vllm_model}` : ''}`}</div></button>)}
                 </div>
                 <div style={{display: 'flex', flexDirection: 'column', gap: 12}}>
                     {!bot && <div style={box}>{'왼쪽에서 봇을 선택하세요.'}</div>}
@@ -177,7 +182,7 @@ function renderPlaceholder(args: any) {
                         <div style={{display: 'flex', justifyContent: 'space-between', gap: 12}}>
                             <strong>{bot.display_name || '@new-bot'}</strong>
                             <div style={{display: 'flex', gap: 8}}>
-                                <button className='btn btn-tertiary' disabled={disabled} type='button' onClick={() => { const copy = {...bot, local_id: id('bot'), username: bot.username ? `${bot.username}-copy` : '', display_name: bot.display_name ? `${bot.display_name} 복사본` : '', output_formats_text: bot.output_formats_text, base64_encoding: [...bot.base64_encoding], allowed_teams: [...bot.allowed_teams], allowed_channels: [...bot.allowed_channels], allowed_users: [...bot.allowed_users]}; apply({...config, bots: [...config.bots, copy]}, copy.local_id); }}>{'복제'}</button>
+                                <button className='btn btn-tertiary' disabled={disabled} type='button' onClick={() => { const copy = {...bot, local_id: id('bot'), username: bot.username ? `${bot.username}-copy` : '', display_name: bot.display_name ? `${bot.display_name} 복사본` : '', output_formats_text: bot.output_formats_text, base64_encoding: [...bot.base64_encoding], mask_sensitive_data: bot.mask_sensitive_data, vllm_base_url: bot.vllm_base_url, vllm_api_key: bot.vllm_api_key, vllm_model: bot.vllm_model, vllm_prompt: bot.vllm_prompt, allowed_teams: [...bot.allowed_teams], allowed_channels: [...bot.allowed_channels], allowed_users: [...bot.allowed_users]}; apply({...config, bots: [...config.bots, copy]}, copy.local_id); }}>{'복제'}</button>
                                 <button className='btn btn-danger' disabled={disabled} type='button' onClick={() => apply({...config, bots: config.bots.filter((item: DraftBot) => item.local_id !== bot.local_id)})}>{'삭제'}</button>
                             </div>
                         </div>
@@ -203,6 +208,17 @@ function renderPlaceholder(args: any) {
                         <label><input disabled={disabled} type='checkbox' checked={bot.coordinates} onChange={(e) => updateBot(bot.local_id, {coordinates: e.target.checked})}/>{' coordinates'}</label>
                         <label><input disabled={disabled} type='checkbox' checked={bot.chart_recognition} onChange={(e) => updateBot(bot.local_id, {chart_recognition: e.target.checked})}/>{' chart_recognition'}</label>
                         <label><input disabled={disabled} type='checkbox' checked={bot.merge_multipage_tables} onChange={(e) => updateBot(bot.local_id, {merge_multipage_tables: e.target.checked})}/>{' merge_multipage_tables'}</label>
+                        <label><input disabled={disabled} type='checkbox' checked={bot.mask_sensitive_data} onChange={(e) => updateBot(bot.local_id, {mask_sensitive_data: e.target.checked})}/>{' 개인정보 마스킹'}</label>
+                        <div style={{...box, display: 'flex', flexDirection: 'column', gap: 8}}>
+                            <strong>{'vLLM 후처리'}</strong>
+                            <span style={note}>{'vLLM URL과 모델을 입력하면 문서 파싱 텍스트를 기반으로 한 번 더 LLM 응답을 생성합니다. 프롬프트에서 {{user_message}}, {{document_text}} 를 사용할 수 있습니다.'}</span>
+                            <div style={row2}>
+                                <Field label={'vLLM URL'}><input disabled={disabled} style={field} value={bot.vllm_base_url} placeholder={'http://localhost:8000/v1'} onChange={(e) => updateBot(bot.local_id, {vllm_base_url: e.target.value})}/></Field>
+                                <Field label={'vLLM API Key'}><input disabled={disabled} type='password' style={field} value={bot.vllm_api_key} placeholder={'비워 두면 Authorization 헤더 없이 호출'} onChange={(e) => updateBot(bot.local_id, {vllm_api_key: e.target.value})}/></Field>
+                            </div>
+                            <Field label={'vLLM Model'}><input disabled={disabled} style={field} value={bot.vllm_model} placeholder={'Qwen/Qwen2.5-7B-Instruct'} onChange={(e) => updateBot(bot.local_id, {vllm_model: e.target.value})}/></Field>
+                            <Field label={'vLLM Prompt'}><textarea disabled={disabled} style={{...field, minHeight: 120}} value={bot.vllm_prompt} placeholder={'문서 내용을 분석해서 한국어로 요약해줘.\n\n사용자 요청:\n{{user_message}}\n\n문서:\n{{document_text}}'} onChange={(e) => updateBot(bot.local_id, {vllm_prompt: e.target.value})}/></Field>
+                        </div>
                         <div style={row3}>
                             <Field label={'허용 팀'}><input disabled={disabled} style={field} value={join(bot.allowed_teams)} placeholder={'engineering'} onChange={(e) => updateBot(bot.local_id, {allowed_teams: split(e.target.value, true)})}/></Field>
                             <Field label={'허용 채널'}><input disabled={disabled} style={field} value={join(bot.allowed_channels)} placeholder={'town-square'} onChange={(e) => updateBot(bot.local_id, {allowed_channels: split(e.target.value, true)})}/></Field>
@@ -312,7 +328,7 @@ function normalizeConfig(value?: AdminPluginConfig): DraftConfig {
         enable_debug_logs: Boolean(value.runtime?.enable_debug_logs),
         enable_usage_logs: value.runtime?.enable_usage_logs ?? true,
     };
-    next.bots = Array.isArray(value.bots) ? value.bots.map((item, i) => normalizeBot(item, i)) : [];
+    next.bots = Array.isArray(value.bots) ? value.bots.map((item, i) => normalizeBot(item, i, next.runtime.mask_sensitive_data)) : [];
     return next;
 }
 
@@ -320,11 +336,11 @@ function buildConfig(config: DraftConfig): AdminPluginConfig {
     return {
         service: {base_url: config.service.base_url.trim(), auth_mode: auth(config.service.auth_mode), auth_token: config.service.auth_token.trim(), allow_hosts: config.service.allow_hosts.trim()},
         runtime: {default_timeout_seconds: num(config.runtime.default_timeout_seconds, 30), max_input_length: num(config.runtime.max_input_length, 4000), max_output_length: num(config.runtime.max_output_length, 8000), mask_sensitive_data: Boolean(config.runtime.mask_sensitive_data), enable_debug_logs: Boolean(config.runtime.enable_debug_logs), enable_usage_logs: Boolean(config.runtime.enable_usage_logs)},
-        bots: config.bots.map((item) => ({id: item.username.trim(), username: item.username.trim(), display_name: item.display_name.trim(), description: item.description.trim(), base_url: item.base_url.trim(), auth_mode: botAuth(item.auth_mode), auth_token: item.auth_token.trim(), model: item.model.trim() || defaultModel, mode: mode(item.mode), ocr: ocr(item.ocr), output_formats: parseOutputFormatsInput(item.output_formats_text), coordinates: Boolean(item.coordinates), chart_recognition: Boolean(item.chart_recognition), merge_multipage_tables: Boolean(item.merge_multipage_tables), base64_encoding: split(join(item.base64_encoding), true), allowed_teams: split(join(item.allowed_teams), true), allowed_channels: split(join(item.allowed_channels), true), allowed_users: split(join(item.allowed_users), true)})),
+        bots: config.bots.map((item) => ({id: item.username.trim(), username: item.username.trim(), display_name: item.display_name.trim(), description: item.description.trim(), base_url: item.base_url.trim(), auth_mode: botAuth(item.auth_mode), auth_token: item.auth_token.trim(), model: item.model.trim() || defaultModel, mode: mode(item.mode), ocr: ocr(item.ocr), output_formats: parseOutputFormatsInput(item.output_formats_text), coordinates: Boolean(item.coordinates), chart_recognition: Boolean(item.chart_recognition), merge_multipage_tables: Boolean(item.merge_multipage_tables), base64_encoding: split(join(item.base64_encoding), true), mask_sensitive_data: Boolean(item.mask_sensitive_data), vllm_base_url: item.vllm_base_url.trim(), vllm_api_key: item.vllm_api_key.trim(), vllm_model: item.vllm_model.trim(), vllm_prompt: item.vllm_prompt.trim(), allowed_teams: split(join(item.allowed_teams), true), allowed_channels: split(join(item.allowed_channels), true), allowed_users: split(join(item.allowed_users), true)})),
     };
 }
 
-function normalizeBot(value: Partial<BotDefinition>, index = 0): DraftBot {
+function normalizeBot(value: Partial<BotDefinition>, index = 0, inheritedMaskSensitive = false): DraftBot {
     return {
         local_id: `bot-${index}`,
         username: user(text(value.username)),
@@ -341,6 +357,11 @@ function normalizeBot(value: Partial<BotDefinition>, index = 0): DraftBot {
         chart_recognition: value.chart_recognition ?? true,
         merge_multipage_tables: value.merge_multipage_tables ?? false,
         base64_encoding: split(join(Array.isArray(value.base64_encoding) ? value.base64_encoding : []), true),
+        mask_sensitive_data: value.mask_sensitive_data ?? inheritedMaskSensitive,
+        vllm_base_url: text(value.vllm_base_url),
+        vllm_api_key: text(value.vllm_api_key),
+        vllm_model: text(value.vllm_model),
+        vllm_prompt: text(value.vllm_prompt),
         allowed_teams: split(join(Array.isArray(value.allowed_teams) ? value.allowed_teams : []), true),
         allowed_channels: split(join(Array.isArray(value.allowed_channels) ? value.allowed_channels : []), true),
         allowed_users: split(join(Array.isArray(value.allowed_users) ? value.allowed_users : []), true),
@@ -368,6 +389,13 @@ function validate(config: DraftConfig) {
         const invalidFormats = invalidOutputFormatsInput(bot.output_formats_text);
         if (invalidFormats.length > 0) {
             items.push(`${label}: output_formats는 html, markdown, text만 지원합니다. (${invalidFormats.join(', ')})`);
+        }
+        const hasVLLMFields = [bot.vllm_base_url, bot.vllm_api_key, bot.vllm_model, bot.vllm_prompt].some((item) => item.trim() !== '');
+        if (hasVLLMFields && !bot.vllm_base_url.trim()) {
+            items.push(`${label}: vLLM을 쓰려면 URL이 필요합니다.`);
+        }
+        if (bot.vllm_base_url.trim() && !bot.vllm_model.trim()) {
+            items.push(`${label}: vLLM URL을 입력했다면 vLLM model도 필요합니다.`);
         }
     });
     return items;
@@ -400,8 +428,8 @@ function curl(config: DraftConfig, bot: DraftBot) {
     }).join('\n');
 }
 
-function emptyBot(): DraftBot {
-    return {local_id: id('bot'), username: '', display_name: '', description: '', base_url: '', auth_mode: '', auth_token: '', model: defaultModel, mode: 'standard', ocr: 'auto', output_formats_text: join(defaultFormats), coordinates: true, chart_recognition: true, merge_multipage_tables: false, base64_encoding: [], allowed_teams: [], allowed_channels: [], allowed_users: []};
+function emptyBot(inheritedMaskSensitive = false): DraftBot {
+    return {local_id: id('bot'), username: '', display_name: '', description: '', base_url: '', auth_mode: '', auth_token: '', model: defaultModel, mode: 'standard', ocr: 'auto', output_formats_text: join(defaultFormats), coordinates: true, chart_recognition: true, merge_multipage_tables: false, base64_encoding: [], mask_sensitive_data: inheritedMaskSensitive, vllm_base_url: '', vllm_api_key: '', vllm_model: '', vllm_prompt: '', allowed_teams: [], allowed_channels: [], allowed_users: []};
 }
 
 function pickBot(bots: DraftBot[], current: string) {
