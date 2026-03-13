@@ -139,10 +139,11 @@ export default function UpstageBotPost(props: Props) {
     const [precontent, setPrecontent] = useState(isUpstageAwaitingFirstChunk(props.post));
     const [showDebugModal, setShowDebugModal] = useState(false);
     const listenerID = useRef(`upstage-${Math.random().toString(36).slice(2)}`);
-    const isErrorPost = props.post?.props?.upstage_error === 'true';
-    const inputDebug = normalizeDebugPayload(props.post?.props?.upstage_error_input);
+    const inputDebug = normalizeDebugPayload(props.post?.props?.upstage_request_input || props.post?.props?.upstage_error_input);
     const outputDebug = normalizeDebugPayload(props.post?.props?.upstage_error_output);
-    const canShowDebug = isErrorPost && (inputDebug !== '' || outputDebug !== '');
+    const canShowDebug = inputDebug !== '' || outputDebug !== '';
+    const debugButtonLabel = outputDebug !== '' ? '요청/응답 파라미터 보기' : '요청 파라미터 보기';
+    const debugModalTitle = outputDebug !== '' ? 'Upstage 요청/응답 파라미터' : 'Upstage 요청 파라미터';
 
     useEffect(() => {
         setMessage(getRenderableMessage(props.post));
@@ -155,6 +156,7 @@ export default function UpstageBotPost(props: Props) {
         props.post.props?.upstage_streaming,
         props.post.props?.upstage_stream_status,
         props.post.props?.upstage_stream_placeholder,
+        props.post.props?.upstage_request_input,
         props.post.props?.upstage_error_input,
         props.post.props?.upstage_error_output,
     ]);
@@ -221,7 +223,7 @@ export default function UpstageBotPost(props: Props) {
                         type='button'
                         onClick={() => setShowDebugModal(true)}
                     >
-                        {'요청/응답 파라미터 보기'}
+                        {debugButtonLabel}
                     </button>
                 </div>
             )}
@@ -255,7 +257,7 @@ export default function UpstageBotPost(props: Props) {
                     >
                         <div style={modalHeaderStyle}>
                             <div style={{display: 'flex', flexDirection: 'column', gap: '4px'}}>
-                                <strong>{'Upstage 요청/응답 파라미터'}</strong>
+                                <strong>{debugModalTitle}</strong>
                                 <span style={statusStyle}>
                                     {`Correlation ID: ${props.post?.props?.upstage_correlation_id || '-'}`}
                                 </span>
@@ -270,13 +272,15 @@ export default function UpstageBotPost(props: Props) {
                         </div>
                         <div style={modalBodyStyle}>
                             <section style={debugPanelStyle}>
-                                <strong>{'Input Parameters'}</strong>
+                                <strong>{'Request Parameters'}</strong>
                                 <pre style={debugPreStyle}>{inputDebug || '{}'}</pre>
                             </section>
-                            <section style={debugPanelStyle}>
-                                <strong>{'Output Parameters'}</strong>
-                                <pre style={debugPreStyle}>{outputDebug || '{}'}</pre>
-                            </section>
+                            {outputDebug !== '' && (
+                                <section style={debugPanelStyle}>
+                                    <strong>{'Response Parameters'}</strong>
+                                    <pre style={debugPreStyle}>{outputDebug}</pre>
+                                </section>
+                            )}
                         </div>
                     </div>
                 </div>

@@ -122,6 +122,7 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 	}
 
 	results := make([]upstageDocumentResult, 0, len(attachments))
+	requestDebugs := make([]upstageRequestDebug, 0, len(attachments))
 	apiDurationTotal := time.Duration(0)
 	for _, attachment := range attachments {
 		result, httpStatus, apiDuration, invokeErr := p.invokeUpstageDocumentParse(ctx, serviceConfig, *bot, attachment, correlationID)
@@ -152,10 +153,14 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 			}, invokeErr
 		}
 		results = append(results, result)
+		requestDebugs = append(requestDebugs, result.RequestDebugs...)
 	}
 
 	output := buildDocumentResponseMessage(prompt, results, cfg.MaxOutputLength)
-	post, err := p.postSuccess(channel, request.RootID, account, correlationID, output, apiDurationTotal)
+	if cfg.MaskSensitiveData {
+		output = truncateString(maskSensitiveContent(output), cfg.MaxOutputLength)
+	}
+	post, err := p.postSuccess(channel, request.RootID, account, correlationID, output, marshalUpstageRequestDebugs(requestDebugs), apiDurationTotal)
 	if err != nil {
 		failure := describeExecutionFailure(err, true, apiDurationTotal)
 		record := newExecutionRecord(request, account.Definition, correlationID, "failed", prompt, failure.Message, failure.ErrorCode, failure.Retryable, startedAt, time.Now())
@@ -482,9 +487,21 @@ func (p *Plugin) ensureBotInChannel(channelID, botUserID string) error {
 	return nil
 }
 
-func (p *Plugin) postSuccess(channel *model.Channel, rootID string, account botAccount, correlationID, output string, apiDuration time.Duration) (*model.Post, error) {
+func (p *Plugin) postSuccess(channel *model.Channel, rootID string, account botAccount, correlationID, output, requestDebug string, apiDuration time.Duration) (*model.Post, error) {
 	if err := p.ensureBotInChannel(channel.Id, account.UserID); err != nil {
 		return nil, err
+	}
+
+	props := map[string]any{
+		"from_bot":                "true",
+		"upstage_bot_id":          account.Definition.ID,
+		"upstage_correlation_id":  correlationID,
+		"upstage_api_duration_ms": apiDuration.Milliseconds(),
+		"upstage_model":           account.Definition.Model,
+		"upstage_document_parser": "true",
+	}
+	if strings.TrimSpace(requestDebug) != "" {
+		props["upstage_request_input"] = requestDebug
 	}
 
 	post, appErr := p.API.CreatePost(&model.Post{
@@ -493,14 +510,7 @@ func (p *Plugin) postSuccess(channel *model.Channel, rootID string, account botA
 		RootId:    rootID,
 		Type:      upstageBotPostType,
 		Message:   buildBotResponseMessage(output, correlationID, apiDuration),
-		Props: map[string]any{
-			"from_bot":                "true",
-			"upstage_bot_id":          account.Definition.ID,
-			"upstage_correlation_id":  correlationID,
-			"upstage_api_duration_ms": apiDuration.Milliseconds(),
-			"upstage_model":           account.Definition.Model,
-			"upstage_document_parser": "true",
-		},
+		Props:     props,
 	})
 	if appErr != nil {
 		return nil, fmt.Errorf("failed to create Upstage response post: %w", appErr)

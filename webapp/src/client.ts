@@ -80,6 +80,7 @@ export type AdminPluginConfig = {
         default_timeout_seconds: number;
         max_input_length: number;
         max_output_length: number;
+        mask_sensitive_data: boolean;
         enable_debug_logs: boolean;
         enable_usage_logs: boolean;
     };

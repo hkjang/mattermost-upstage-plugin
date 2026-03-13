@@ -19,7 +19,7 @@ type DraftBot = {
     model: string;
     mode: string;
     ocr: string;
-    output_formats: string[];
+    output_formats_text: string;
     coordinates: boolean;
     chart_recognition: boolean;
     merge_multipage_tables: boolean;
@@ -31,7 +31,7 @@ type DraftBot = {
 
 type DraftConfig = {
     service: {base_url: string; auth_mode: string; auth_token: string; allow_hosts: string};
-    runtime: {default_timeout_seconds: number; max_input_length: number; max_output_length: number; enable_debug_logs: boolean; enable_usage_logs: boolean};
+    runtime: {default_timeout_seconds: number; max_input_length: number; max_output_length: number; mask_sensitive_data: boolean; enable_debug_logs: boolean; enable_usage_logs: boolean};
     bots: DraftBot[];
 };
 
@@ -66,6 +66,7 @@ export default function ConfigSetting(props: Props) {
     const [selected, setSelected] = useState('');
     const [status, setStatus] = useState<PluginStatus | null>(null);
     const [connection, setConnection] = useState<ConnectionStatus | null>(null);
+    const [connectionError, setConnectionError] = useState('');
     const [source, setSource] = useState('config');
     const [error, setError] = useState('');
     const [loadingConfig, setLoadingConfig] = useState(true);
@@ -88,22 +89,22 @@ export default function ConfigSetting(props: Props) {
         setSelected(nextSelected || pickBot(next.bots, selected));
     };
 
-    return <div style={stack}>{renderPlaceholder({bot, card, messages, error, loadingConfig, source, props, manifest, status, loadingStatus, connection, testing, config, disabled, apply, setConnection, setTesting, setError, setSelected})}</div>;
+    return <div style={stack}>{renderPlaceholder({bot, card, messages, error, loadingConfig, source, props, manifest, status, loadingStatus, connection, connectionError, testing, config, disabled, apply, setConnection, setConnectionError, setTesting, setError, setSelected})}</div>;
 }
 
 function renderPlaceholder(args: any) {
-    const {bot, card, messages, error, loadingConfig, source, props, manifest, status, loadingStatus, connection, testing, config, disabled, apply, setConnection, setTesting, setError, setSelected} = args;
+    const {bot, card, messages, error, loadingConfig, source, props, manifest, status, loadingStatus, connection, connectionError, testing, config, disabled, apply, setConnection, setConnectionError, setTesting, setError, setSelected} = args;
     const updateService = (patch: Partial<DraftConfig['service']>) => apply({...config, service: {...config.service, ...patch}});
     const updateRuntime = (patch: Partial<DraftConfig['runtime']>) => apply({...config, runtime: {...config.runtime, ...patch}});
     const updateBot = (id: string, patch: Partial<DraftBot>) => apply({...config, bots: config.bots.map((item: DraftBot) => item.local_id === id ? {...item, ...patch} : item)}, id);
     const test = async () => {
         setTesting(true);
         setConnection(null);
-        setError('');
+        setConnectionError('');
         try {
             setConnection(await testConnection());
         } catch (e) {
-            setError((e as Error).message);
+            setConnectionError((e as Error).message);
         } finally {
             setTesting(false);
         }
@@ -150,8 +151,10 @@ function renderPlaceholder(args: any) {
                     <Field label={'최대 메시지 길이'}><input disabled={disabled} type='number' min={1} style={field} value={String(config.runtime.max_input_length)} onChange={(e) => updateRuntime({max_input_length: num(e.target.value, 4000)})}/></Field>
                     <Field label={'최대 응답 길이'}><input disabled={disabled} type='number' min={1} style={field} value={String(config.runtime.max_output_length)} onChange={(e) => updateRuntime({max_output_length: num(e.target.value, 8000)})}/></Field>
                 </div>
+                <label><input disabled={disabled} type='checkbox' checked={config.runtime.mask_sensitive_data} onChange={(e) => updateRuntime({mask_sensitive_data: e.target.checked})}/>{' 개인정보 마스킹'}</label>
                 <label><input disabled={disabled} type='checkbox' checked={config.runtime.enable_debug_logs} onChange={(e) => updateRuntime({enable_debug_logs: e.target.checked})}/>{' 디버그 로그'}</label>
                 <label><input disabled={disabled} type='checkbox' checked={config.runtime.enable_usage_logs} onChange={(e) => updateRuntime({enable_usage_logs: e.target.checked})}/>{' 사용량 로그'}</label>
+                <span style={note}>{'개인정보 마스킹을 켜면 문서 파싱 결과에 포함된 이메일, 전화번호, 주민등록번호 형태, 긴 숫자 식별자를 가려서 게시합니다.'}</span>
             </>}
         </section>
 
@@ -174,7 +177,7 @@ function renderPlaceholder(args: any) {
                         <div style={{display: 'flex', justifyContent: 'space-between', gap: 12}}>
                             <strong>{bot.display_name || '@new-bot'}</strong>
                             <div style={{display: 'flex', gap: 8}}>
-                                <button className='btn btn-tertiary' disabled={disabled} type='button' onClick={() => { const copy = {...bot, local_id: id('bot'), username: bot.username ? `${bot.username}-copy` : '', display_name: bot.display_name ? `${bot.display_name} 복사본` : '', output_formats: [...bot.output_formats], base64_encoding: [...bot.base64_encoding], allowed_teams: [...bot.allowed_teams], allowed_channels: [...bot.allowed_channels], allowed_users: [...bot.allowed_users]}; apply({...config, bots: [...config.bots, copy]}, copy.local_id); }}>{'복제'}</button>
+                                <button className='btn btn-tertiary' disabled={disabled} type='button' onClick={() => { const copy = {...bot, local_id: id('bot'), username: bot.username ? `${bot.username}-copy` : '', display_name: bot.display_name ? `${bot.display_name} 복사본` : '', output_formats_text: bot.output_formats_text, base64_encoding: [...bot.base64_encoding], allowed_teams: [...bot.allowed_teams], allowed_channels: [...bot.allowed_channels], allowed_users: [...bot.allowed_users]}; apply({...config, bots: [...config.bots, copy]}, copy.local_id); }}>{'복제'}</button>
                                 <button className='btn btn-danger' disabled={disabled} type='button' onClick={() => apply({...config, bots: config.bots.filter((item: DraftBot) => item.local_id !== bot.local_id)})}>{'삭제'}</button>
                             </div>
                         </div>
@@ -189,7 +192,7 @@ function renderPlaceholder(args: any) {
                             <Field label={'ocr'}><select disabled={disabled} style={field} value={bot.ocr} onChange={(e) => updateBot(bot.local_id, {ocr: ocr(e.target.value)})}><option value='auto'>{'auto'}</option><option value='force'>{'force'}</option></select></Field>
                         </div>
                         <div style={row2}>
-                            <Field label={'output_formats'}><input disabled={disabled} style={field} value={join(bot.output_formats)} placeholder={'비워 두면 API 기본값 사용'} onChange={(e) => updateBot(bot.local_id, {output_formats: formats(split(e.target.value, true))})}/></Field>
+                            <Field label={'output_formats'}><input disabled={disabled} style={field} value={bot.output_formats_text} placeholder={'markdown, text, html 또는 비워 두기'} onChange={(e) => updateBot(bot.local_id, {output_formats_text: e.target.value})}/></Field>
                             <Field label={'base64_encoding'}><input disabled={disabled} style={field} value={join(bot.base64_encoding)} placeholder={'table'} onChange={(e) => updateBot(bot.local_id, {base64_encoding: split(e.target.value, true)})}/></Field>
                         </div>
                         <div style={row2}>
@@ -216,7 +219,8 @@ function renderPlaceholder(args: any) {
             {loadingStatus ? <span>{'플러그인 상태를 불러오는 중입니다...'}</span> : <>
                 {status && <div style={box}><div>{`기본 URL: ${status.base_url || '설정되지 않음'}`}</div><div>{`봇 수: ${status.bot_count}`}</div><div>{`허용 호스트: ${(status.allow_hosts || []).join(', ') || '기본 URL 호스트 사용'}`}</div>{status.config_error && <div>{`설정 오류: ${status.config_error}`}</div>}{status.bot_sync?.last_error && <div>{`동기화 오류: ${status.bot_sync.last_error}`}</div>}</div>}
                 <button className='btn btn-primary' disabled={testing} type='button' onClick={test}>{testing ? '연결 확인 중...' : '연결 테스트'}</button>
-                {connection && <div style={box}><div>{connection.ok ? '연결에 성공했습니다.' : '연결에 실패했습니다.'}</div><div>{connection.url}</div><div style={{whiteSpace: 'pre-wrap'}}>{connection.message}</div>{connection.error_code && <div>{`오류 코드: ${connection.error_code}`}</div>}{connection.detail && <div style={{whiteSpace: 'pre-wrap'}}>{connection.detail}</div>}</div>}
+                {connection && <div style={box}><div>{connection.ok ? '연결에 성공했습니다.' : '연결에 실패했습니다.'}</div><div>{connection.url}</div><div style={{whiteSpace: 'pre-wrap'}}>{connection.message}</div>{connection.error_code && <div>{`오류 코드: ${connection.error_code}`}</div>}{connection.detail && <div style={{whiteSpace: 'pre-wrap'}}>{connection.detail}</div>}{connection.hint && <div style={{whiteSpace: 'pre-wrap'}}>{connection.hint}</div>}</div>}
+                {connectionError && <div style={box}><div>{'연결 테스트 중 오류가 발생했습니다.'}</div><div style={{whiteSpace: 'pre-wrap'}}>{connectionError}</div></div>}
             </>}
         </section>
 
@@ -231,7 +235,7 @@ function Field(props: {label: string; children: React.ReactNode}) {
 function createDefaultConfig(): DraftConfig {
     return {
         service: {base_url: defaultURL, auth_mode: 'bearer', auth_token: '', allow_hosts: ''},
-        runtime: {default_timeout_seconds: 30, max_input_length: 4000, max_output_length: 8000, enable_debug_logs: false, enable_usage_logs: true},
+        runtime: {default_timeout_seconds: 30, max_input_length: 4000, max_output_length: 8000, mask_sensitive_data: false, enable_debug_logs: false, enable_usage_logs: true},
         bots: [],
     };
 }
@@ -304,6 +308,7 @@ function normalizeConfig(value?: AdminPluginConfig): DraftConfig {
         default_timeout_seconds: num(value.runtime?.default_timeout_seconds, 30),
         max_input_length: num(value.runtime?.max_input_length, 4000),
         max_output_length: num(value.runtime?.max_output_length, 8000),
+        mask_sensitive_data: Boolean(value.runtime?.mask_sensitive_data),
         enable_debug_logs: Boolean(value.runtime?.enable_debug_logs),
         enable_usage_logs: value.runtime?.enable_usage_logs ?? true,
     };
@@ -314,8 +319,8 @@ function normalizeConfig(value?: AdminPluginConfig): DraftConfig {
 function buildConfig(config: DraftConfig): AdminPluginConfig {
     return {
         service: {base_url: config.service.base_url.trim(), auth_mode: auth(config.service.auth_mode), auth_token: config.service.auth_token.trim(), allow_hosts: config.service.allow_hosts.trim()},
-        runtime: {default_timeout_seconds: num(config.runtime.default_timeout_seconds, 30), max_input_length: num(config.runtime.max_input_length, 4000), max_output_length: num(config.runtime.max_output_length, 8000), enable_debug_logs: Boolean(config.runtime.enable_debug_logs), enable_usage_logs: Boolean(config.runtime.enable_usage_logs)},
-        bots: config.bots.map((item) => ({id: item.username.trim(), username: item.username.trim(), display_name: item.display_name.trim(), description: item.description.trim(), base_url: item.base_url.trim(), auth_mode: botAuth(item.auth_mode), auth_token: item.auth_token.trim(), model: item.model.trim() || defaultModel, mode: mode(item.mode), ocr: ocr(item.ocr), output_formats: formats(item.output_formats), coordinates: Boolean(item.coordinates), chart_recognition: Boolean(item.chart_recognition), merge_multipage_tables: Boolean(item.merge_multipage_tables), base64_encoding: split(join(item.base64_encoding), true), allowed_teams: split(join(item.allowed_teams), true), allowed_channels: split(join(item.allowed_channels), true), allowed_users: split(join(item.allowed_users), true)})),
+        runtime: {default_timeout_seconds: num(config.runtime.default_timeout_seconds, 30), max_input_length: num(config.runtime.max_input_length, 4000), max_output_length: num(config.runtime.max_output_length, 8000), mask_sensitive_data: Boolean(config.runtime.mask_sensitive_data), enable_debug_logs: Boolean(config.runtime.enable_debug_logs), enable_usage_logs: Boolean(config.runtime.enable_usage_logs)},
+        bots: config.bots.map((item) => ({id: item.username.trim(), username: item.username.trim(), display_name: item.display_name.trim(), description: item.description.trim(), base_url: item.base_url.trim(), auth_mode: botAuth(item.auth_mode), auth_token: item.auth_token.trim(), model: item.model.trim() || defaultModel, mode: mode(item.mode), ocr: ocr(item.ocr), output_formats: parseOutputFormatsInput(item.output_formats_text), coordinates: Boolean(item.coordinates), chart_recognition: Boolean(item.chart_recognition), merge_multipage_tables: Boolean(item.merge_multipage_tables), base64_encoding: split(join(item.base64_encoding), true), allowed_teams: split(join(item.allowed_teams), true), allowed_channels: split(join(item.allowed_channels), true), allowed_users: split(join(item.allowed_users), true)})),
     };
 }
 
@@ -331,7 +336,7 @@ function normalizeBot(value: Partial<BotDefinition>, index = 0): DraftBot {
         model: text(value.model) || defaultModel,
         mode: mode(text(value.mode)),
         ocr: ocr(text(value.ocr)),
-        output_formats: formats(value.output_formats),
+        output_formats_text: join(formats(value.output_formats)),
         coordinates: value.coordinates ?? true,
         chart_recognition: value.chart_recognition ?? true,
         merge_multipage_tables: value.merge_multipage_tables ?? false,
@@ -360,6 +365,10 @@ function validate(config: DraftConfig) {
         if (!bot.display_name.trim()) {
             items.push(`${label}: 표시 이름은 필수입니다.`);
         }
+        const invalidFormats = invalidOutputFormatsInput(bot.output_formats_text);
+        if (invalidFormats.length > 0) {
+            items.push(`${label}: output_formats는 html, markdown, text만 지원합니다. (${invalidFormats.join(', ')})`);
+        }
     });
     return items;
 }
@@ -373,8 +382,8 @@ function curl(config: DraftConfig, bot: DraftBot) {
     if (ocr(bot.ocr) !== 'auto') {
         lines.push(`-F "ocr=${ocr(bot.ocr)}"`);
     }
-    if (formats(bot.output_formats).length > 0) {
-        lines.push(`-F "output_formats=${JSON.stringify(formats(bot.output_formats))}"`);
+    if (parseOutputFormatsInput(bot.output_formats_text).length > 0) {
+        lines.push(`-F "output_formats=${JSON.stringify(parseOutputFormatsInput(bot.output_formats_text))}"`);
     }
     if (!bot.coordinates) {
         lines.push(`-F "coordinates=${String(bot.coordinates)}"`);
@@ -392,7 +401,7 @@ function curl(config: DraftConfig, bot: DraftBot) {
 }
 
 function emptyBot(): DraftBot {
-    return {local_id: id('bot'), username: '', display_name: '', description: '', base_url: '', auth_mode: '', auth_token: '', model: defaultModel, mode: 'standard', ocr: 'auto', output_formats: [...defaultFormats], coordinates: true, chart_recognition: true, merge_multipage_tables: false, base64_encoding: [], allowed_teams: [], allowed_channels: [], allowed_users: []};
+    return {local_id: id('bot'), username: '', display_name: '', description: '', base_url: '', auth_mode: '', auth_token: '', model: defaultModel, mode: 'standard', ocr: 'auto', output_formats_text: join(defaultFormats), coordinates: true, chart_recognition: true, merge_multipage_tables: false, base64_encoding: [], allowed_teams: [], allowed_channels: [], allowed_users: []};
 }
 
 function pickBot(bots: DraftBot[], current: string) {
@@ -411,3 +420,5 @@ function id(prefix: string) { return typeof crypto !== 'undefined' && typeof cry
 function join(values: string[]) { return values.join(', '); }
 function split(value: string, lower = false) { return value.split(/[\r\n,]+/).map((item) => lower ? item.trim().toLowerCase() : item.trim()).filter(Boolean).filter((item, index, all) => all.indexOf(item) === index); }
 function formats(values: unknown) { const allowed = new Set(['html', 'markdown', 'text']); return (Array.isArray(values) ? values : []).map((item) => text(item).trim().toLowerCase()).filter((item) => allowed.has(item)).filter((item, index, all) => all.indexOf(item) === index); }
+function parseOutputFormatsInput(value: string) { const allowed = new Set(['html', 'markdown', 'text']); return split(value, true).filter((item) => allowed.has(item)); }
+function invalidOutputFormatsInput(value: string) { const allowed = new Set(['html', 'markdown', 'text']); return split(value, true).filter((item) => !allowed.has(item)); }

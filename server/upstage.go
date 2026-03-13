@@ -25,6 +25,7 @@ type upstageServiceConfig struct {
 	ParsedBaseURL *url.URL
 	AuthMode      string
 	AuthToken     string
+	Timeout       time.Duration
 }
 
 type upstageConnectionStatus struct {
@@ -63,8 +64,9 @@ type upstageParseResponse struct {
 }
 
 type upstageDocumentResult struct {
-	Attachment botAttachment
-	Response   upstageParseResponse
+	Attachment    botAttachment
+	Response      upstageParseResponse
+	RequestDebugs []upstageRequestDebug
 }
 
 type upstageCallError struct {
@@ -208,6 +210,7 @@ func (cfg *runtimeConfiguration) serviceConfigForBot(bot BotDefinition) (upstage
 		ParsedBaseURL: parsedURL,
 		AuthMode:      authMode,
 		AuthToken:     authToken,
+		Timeout:       cfg.DefaultTimeout,
 	}, nil
 }
 
@@ -222,24 +225,31 @@ func (p *Plugin) invokeUpstageDocumentParse(
 	if err != nil {
 		return upstageDocumentResult{}, 0, 0, err
 	}
+	initialDebug := buildUpstageRequestDebug(service, fields, attachment, correlationID, "")
 
 	startedAt := time.Now()
-	result, statusCode, err := p.performUpstageDocumentParseRequest(ctx, service, bot, attachment, correlationID, fields, "")
+	result, statusCode, err := p.performUpstageDocumentParseRequest(ctx, service, bot, attachment, fields, initialDebug)
 	elapsed := time.Since(startedAt)
-	if err == nil || statusCode != http.StatusBadRequest || strings.TrimSpace(fields["output_formats"]) == "" {
+	if err == nil {
+		result.RequestDebugs = append(result.RequestDebugs, initialDebug)
+		return result, statusCode, elapsed, nil
+	}
+	if statusCode != http.StatusBadRequest || strings.TrimSpace(fields["output_formats"]) == "" {
 		return result, statusCode, elapsed, err
 	}
 
 	retryFields := cloneUpstageFields(fields)
 	delete(retryFields, "output_formats")
+	retryDebug := buildUpstageRequestDebug(service, retryFields, attachment, correlationID, "retry_without_output_formats")
 
-	retryResult, retryStatus, retryErr := p.performUpstageDocumentParseRequest(ctx, service, bot, attachment, correlationID, retryFields, "retry_without_output_formats")
+	retryResult, retryStatus, retryErr := p.performUpstageDocumentParseRequest(ctx, service, bot, attachment, retryFields, retryDebug)
 	if retryErr == nil {
+		retryResult.RequestDebugs = append(retryResult.RequestDebugs, initialDebug, retryDebug)
 		p.API.LogWarn("Upstage request succeeded after retrying without output_formats", "correlation_id", correlationID, "bot_id", bot.ID, "filename", sanitizeUploadFilename(attachment.Name))
 		return retryResult, retryStatus, time.Since(startedAt), nil
 	}
 
-	return retryResult, retryStatus, time.Since(startedAt), retryErr
+	return retryResult, retryStatus, time.Since(startedAt), attachUpstageAttemptDebug(retryErr, []upstageRequestDebug{initialDebug, retryDebug})
 }
 
 func (p *Plugin) performUpstageDocumentParseRequest(
@@ -247,14 +257,12 @@ func (p *Plugin) performUpstageDocumentParseRequest(
 	service upstageServiceConfig,
 	bot BotDefinition,
 	attachment botAttachment,
-	correlationID string,
 	fields map[string]string,
-	attempt string,
+	requestDebug upstageRequestDebug,
 ) (upstageDocumentResult, int, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
-	requestDebug := buildUpstageRequestDebug(service, fields, attachment, correlationID, attempt)
 	for key, value := range fields {
 		if err := writer.WriteField(key, value); err != nil {
 			return upstageDocumentResult{}, 0, fmt.Errorf("failed to write %s field: %w", key, err)
@@ -278,10 +286,10 @@ func (p *Plugin) performUpstageDocumentParseRequest(
 	}
 	request.Header.Set("Content-Type", writer.FormDataContentType())
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("X-Correlation-ID", correlationID)
+	request.Header.Set("X-Correlation-ID", strings.TrimSpace(requestDebug.Correlation))
 	applyAuthHeader(request, service)
 
-	client := &http.Client{Timeout: 2 * time.Minute}
+	client := &http.Client{Timeout: resolveUpstageRequestTimeout(service.Timeout)}
 	response, err := client.Do(request)
 	if err != nil {
 		return upstageDocumentResult{}, 0, attachUpstageDebug(
@@ -724,6 +732,13 @@ func minDuration(values ...time.Duration) time.Duration {
 	return minimum
 }
 
+func resolveUpstageRequestTimeout(value time.Duration) time.Duration {
+	if value <= 0 {
+		return time.Duration(defaultTimeoutSeconds) * time.Second
+	}
+	return value
+}
+
 func cloneUpstageFields(fields map[string]string) map[string]string {
 	cloned := make(map[string]string, len(fields))
 	for key, value := range fields {
@@ -802,6 +817,21 @@ func attachUpstageDebug(err error, requestDebug upstageRequestDebug, responseDeb
 	return err
 }
 
+func attachUpstageAttemptDebug(err error, requestDebugs []upstageRequestDebug) error {
+	if err == nil {
+		return nil
+	}
+
+	var callErr *upstageCallError
+	if !errors.As(err, &callErr) {
+		return err
+	}
+
+	copyErr := *callErr
+	copyErr.InputDebug = marshalUpstageRequestDebugs(requestDebugs)
+	return &copyErr
+}
+
 func (e *upstageCallError) withDebug(requestDebug upstageRequestDebug, responseDebug upstageResponseDebug) *upstageCallError {
 	if e == nil {
 		return nil
@@ -819,6 +849,17 @@ func marshalUpstageDebugPayload(payload any) string {
 		return ""
 	}
 	return string(raw)
+}
+
+func marshalUpstageRequestDebugs(requestDebugs []upstageRequestDebug) string {
+	switch len(requestDebugs) {
+	case 0:
+		return ""
+	case 1:
+		return marshalUpstageDebugPayload(requestDebugs[0])
+	default:
+		return marshalUpstageDebugPayload(requestDebugs)
+	}
 }
 
 func newUpstageCallError(code, summary, detail, hint, requestURL string, statusCode int, retryable bool) *upstageCallError {

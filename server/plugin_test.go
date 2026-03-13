@@ -68,6 +68,7 @@ func TestConfigurationNormalizeFromConfig(t *testing.T) {
 				"default_timeout_seconds": 55,
 				"max_input_length": 5000,
 				"max_output_length": 9000,
+				"mask_sensitive_data": true,
 				"enable_debug_logs": true,
 				"enable_usage_logs": false
 			},
@@ -83,6 +84,7 @@ func TestConfigurationNormalizeFromConfig(t *testing.T) {
 	require.Equal(t, "x-api-key", runtimeCfg.AuthMode)
 	require.Equal(t, "secret", runtimeCfg.AuthToken)
 	require.Equal(t, 55, int(runtimeCfg.DefaultTimeout.Seconds()))
+	require.True(t, runtimeCfg.MaskSensitiveData)
 	require.False(t, runtimeCfg.EnableUsageLogs)
 	require.Len(t, runtimeCfg.BotDefinitions, 1)
 	require.Equal(t, "summary-bot", runtimeCfg.BotDefinitions[0].ID)
@@ -242,6 +244,7 @@ func TestServiceConfigForBotPrefersBotOverrides(t *testing.T) {
 		AuthMode:       "bearer",
 		AuthToken:      "secret",
 		AllowHosts:     []string{"api.upstage.ai"},
+		DefaultTimeout: 45 * time.Second,
 	}
 
 	service, err := cfg.serviceConfigForBot(BotDefinition{
@@ -253,6 +256,7 @@ func TestServiceConfigForBotPrefersBotOverrides(t *testing.T) {
 	require.Equal(t, "https://api.upstage.ai/v1/document-digitization", service.BaseURL)
 	require.Equal(t, "x-api-key", service.AuthMode)
 	require.Equal(t, "override", service.AuthToken)
+	require.Equal(t, 45*time.Second, service.Timeout)
 }
 
 func TestClassifyUpstageHTTPErrorUnauthorized(t *testing.T) {

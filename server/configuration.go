@@ -42,22 +42,24 @@ type storedRuntimeConfig struct {
 	MaxInputLength        int  `json:"max_input_length"`
 	MaxOutputLength       int  `json:"max_output_length"`
 	ContextPostLimit      int  `json:"context_post_limit"`
+	MaskSensitiveData     bool `json:"mask_sensitive_data"`
 	EnableDebugLogs       bool `json:"enable_debug_logs"`
 	EnableUsageLogs       bool `json:"enable_usage_logs"`
 }
 
 type runtimeConfiguration struct {
-	ServiceBaseURL  string
-	ParsedBaseURL   *url.URL
-	AuthMode        string
-	AuthToken       string
-	AllowHosts      []string
-	BotDefinitions  []BotDefinition
-	DefaultTimeout  time.Duration
-	MaxInputLength  int
-	MaxOutputLength int
-	EnableDebugLogs bool
-	EnableUsageLogs bool
+	ServiceBaseURL    string
+	ParsedBaseURL     *url.URL
+	AuthMode          string
+	AuthToken         string
+	AllowHosts        []string
+	BotDefinitions    []BotDefinition
+	DefaultTimeout    time.Duration
+	MaxInputLength    int
+	MaxOutputLength   int
+	MaskSensitiveData bool
+	EnableDebugLogs   bool
+	EnableUsageLogs   bool
 }
 
 func (c *configuration) Clone() *configuration {
@@ -110,12 +112,13 @@ func defaultStoredPluginConfig() storedPluginConfig {
 
 func (c storedPluginConfig) normalize() (*runtimeConfiguration, error) {
 	cfg := &runtimeConfiguration{
-		AuthMode:        normalizeAuthMode(c.Service.AuthMode),
-		AuthToken:       strings.TrimSpace(c.Service.AuthToken),
-		MaxInputLength:  positiveOrDefault(c.Runtime.MaxInputLength, defaultMaxInputLength),
-		MaxOutputLength: positiveOrDefault(c.Runtime.MaxOutputLength, defaultMaxOutputLength),
-		EnableDebugLogs: c.Runtime.EnableDebugLogs,
-		EnableUsageLogs: c.Runtime.EnableUsageLogs,
+		AuthMode:          normalizeAuthMode(c.Service.AuthMode),
+		AuthToken:         strings.TrimSpace(c.Service.AuthToken),
+		MaxInputLength:    positiveOrDefault(c.Runtime.MaxInputLength, defaultMaxInputLength),
+		MaxOutputLength:   positiveOrDefault(c.Runtime.MaxOutputLength, defaultMaxOutputLength),
+		MaskSensitiveData: c.Runtime.MaskSensitiveData,
+		EnableDebugLogs:   c.Runtime.EnableDebugLogs,
+		EnableUsageLogs:   c.Runtime.EnableUsageLogs,
 	}
 	cfg.DefaultTimeout = time.Duration(positiveOrDefault(c.Runtime.DefaultTimeoutSeconds, defaultTimeoutSeconds)) * time.Second
 
