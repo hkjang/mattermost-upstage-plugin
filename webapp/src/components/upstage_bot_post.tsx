@@ -140,7 +140,7 @@ export default function UpstageBotPost(props: Props) {
     const [showDebugModal, setShowDebugModal] = useState(false);
     const listenerID = useRef(`upstage-${Math.random().toString(36).slice(2)}`);
     const inputDebug = normalizeDebugPayload(props.post?.props?.upstage_request_input || props.post?.props?.upstage_error_input);
-    const outputDebug = normalizeDebugPayload(props.post?.props?.upstage_error_output);
+    const outputDebug = normalizeDebugPayload(props.post?.props?.upstage_response_output || props.post?.props?.upstage_error_output);
     const canShowDebug = inputDebug !== '' || outputDebug !== '';
     const debugButtonLabel = outputDebug !== '' ? '요청/응답 파라미터 보기' : '요청 파라미터 보기';
     const debugModalTitle = outputDebug !== '' ? 'Upstage 요청/응답 파라미터' : 'Upstage 요청 파라미터';
@@ -157,6 +157,7 @@ export default function UpstageBotPost(props: Props) {
         props.post.props?.upstage_stream_status,
         props.post.props?.upstage_stream_placeholder,
         props.post.props?.upstage_request_input,
+        props.post.props?.upstage_response_output,
         props.post.props?.upstage_error_input,
         props.post.props?.upstage_error_output,
     ]);

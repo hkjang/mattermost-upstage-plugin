@@ -357,6 +357,14 @@ func TestRenderVLLMPromptSupportsPlaceholders(t *testing.T) {
 	require.Contains(t, rendered, "문서 내용")
 }
 
+func TestBuildVLLMFallbackOutputIncludesDocumentContext(t *testing.T) {
+	output := buildVLLMFallbackOutput("### invoice.pdf\n본문", "vLLM 후처리에 실패해 Upstage 문서 파싱 결과를 대신 표시합니다.")
+
+	require.Contains(t, output, "Upstage 문서 파싱 결과를 대신 표시합니다.")
+	require.Contains(t, output, "### invoice.pdf")
+	require.Contains(t, output, "본문")
+}
+
 func TestExtractPromptFromMessageTriggersFileOnlyDirectMessages(t *testing.T) {
 	bot, err := (BotDefinition{Username: "parser-bot", DisplayName: "Parser Bot"}).normalize()
 	require.NoError(t, err)

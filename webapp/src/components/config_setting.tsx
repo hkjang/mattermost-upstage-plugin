@@ -209,6 +209,7 @@ function renderPlaceholder(args: any) {
                         <label><input disabled={disabled} type='checkbox' checked={bot.chart_recognition} onChange={(e) => updateBot(bot.local_id, {chart_recognition: e.target.checked})}/>{' chart_recognition'}</label>
                         <label><input disabled={disabled} type='checkbox' checked={bot.merge_multipage_tables} onChange={(e) => updateBot(bot.local_id, {merge_multipage_tables: e.target.checked})}/>{' merge_multipage_tables'}</label>
                         <label><input disabled={disabled} type='checkbox' checked={bot.mask_sensitive_data} onChange={(e) => updateBot(bot.local_id, {mask_sensitive_data: e.target.checked})}/>{' 개인정보 마스킹'}</label>
+                        <span style={note}>{'마스킹 대상: 이메일 주소, 한국 휴대폰/전화번호, 주민등록번호(예: 900101-1234567 또는 9001011234567), 13자리 이상 카드/계좌/식별번호 형태의 숫자열'}</span>
                         <div style={{...box, display: 'flex', flexDirection: 'column', gap: 8}}>
                             <strong>{'vLLM 후처리'}</strong>
                             <span style={note}>{'vLLM URL과 모델을 입력하면 문서 파싱 텍스트를 기반으로 한 번 더 LLM 응답을 생성합니다. 프롬프트에서 {{user_message}}, {{document_text}} 를 사용할 수 있습니다.'}</span>

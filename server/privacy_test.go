@@ -17,3 +17,13 @@ func TestMaskSensitiveContentMasksCommonPersonalData(t *testing.T) {
 	require.Contains(t, masked, "******-*******")
 	require.Contains(t, masked, "**** **** **** 1111")
 }
+
+func TestMaskSensitiveContentMasksResidentIDWithoutHyphen(t *testing.T) {
+	input := "주민번호 9001011234567 와 외국인번호 0101015234567"
+
+	masked := maskSensitiveContent(input)
+
+	require.NotContains(t, masked, "9001011234567")
+	require.NotContains(t, masked, "0101015234567")
+	require.Contains(t, masked, "*************")
+}

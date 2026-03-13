@@ -61,6 +61,11 @@ type executionFailureView struct {
 	APIDuration time.Duration
 }
 
+type successDebugView struct {
+	Request string
+	Output  string
+}
+
 const upstageBotPostType = "custom_upstage_bot"
 
 func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (*BotRunResult, error) {
@@ -165,73 +170,37 @@ func (p *Plugin) executeBotAndPost(ctx context.Context, request BotRunRequest) (
 	}
 
 	output := documentContext
-	requestDebugPayload := buildSuccessRequestDebugPayload(requestDebugs, "")
+	debugView := successDebugView{
+		Request: buildSuccessRequestDebugPayload(requestDebugs, ""),
+	}
 	if bot.hasVLLMPostProcess() {
 		vllmConfig, vllmErr := cfg.serviceConfigForVLLMBot(*bot)
 		if vllmErr != nil {
-			failure := executionFailureView{
-				HasFailure:  true,
-				StageLabel:  "vLLM 후처리 설정",
-				Message:     strings.TrimSpace(vllmErr.Error()),
-				APIDuration: apiDurationTotal,
-			}
-			record := newExecutionRecord(request, account.Definition, correlationID, "failed", prompt, failure.Message, failure.ErrorCode, failure.Retryable, startedAt, time.Now())
-			p.appendExecutionHistory(request.UserID, record)
-			p.logUsage(cfg, correlationID, request, account.Definition, "failed", failure.Message)
-			if postErr := p.postFailure(channel, request.RootID, account, correlationID, failure); postErr != nil {
-				p.API.LogError("Failed to post vLLM configuration error response", "error", postErr, "correlation_id", correlationID)
-			}
-			return &BotRunResult{
-				CorrelationID: correlationID,
-				BotID:         account.Definition.ID,
-				BotUsername:   account.Definition.Username,
-				BotName:       account.Definition.DisplayName,
-				Model:         account.Definition.Model,
-				APIDurationMS: apiDurationTotal.Milliseconds(),
-				Status:        "failed",
-				ErrorMessage:  failure.Message,
-				ErrorCode:     failure.ErrorCode,
-				ErrorDetail:   failure.Detail,
-				ErrorHint:     failure.Hint,
-				RequestURL:    failure.RequestURL,
-				HTTPStatus:    failure.HTTPStatus,
-				Retryable:     failure.Retryable,
-			}, vllmErr
+			output = buildVLLMFallbackOutput(documentContext, "vLLM 후처리 설정을 확인하지 못해 Upstage 문서 파싱 결과를 대신 표시합니다.")
 		}
-		vllmOutput, vllmDebug, vllmErr := p.invokeVLLMPostProcess(ctx, vllmConfig, prompt, documentContext, correlationID)
-		if vllmErr != nil {
-			failure := describeExecutionFailure(vllmErr, true, apiDurationTotal)
-			record := newExecutionRecord(request, account.Definition, correlationID, "failed", prompt, failure.Message, failure.ErrorCode, failure.Retryable, startedAt, time.Now())
-			p.appendExecutionHistory(request.UserID, record)
-			p.logUsage(cfg, correlationID, request, account.Definition, "failed", failure.Message)
-			if postErr := p.postFailure(channel, request.RootID, account, correlationID, failure); postErr != nil {
-				p.API.LogError("Failed to post vLLM error response", "error", postErr, "correlation_id", correlationID)
+		if vllmErr == nil {
+			vllmOutput, vllmDebug, invokeErr := p.invokeVLLMPostProcess(ctx, vllmConfig, prompt, documentContext, correlationID)
+			if invokeErr != nil {
+				failure := describeExecutionFailure(invokeErr, true, apiDurationTotal)
+				output = buildVLLMFallbackOutput(documentContext, "vLLM 후처리에 실패해 Upstage 문서 파싱 결과를 대신 표시합니다.")
+				debugView = successDebugView{
+					Request: buildSuccessRequestDebugPayload(requestDebugs, failure.InputDebug),
+					Output:  failure.OutputDebug,
+				}
+				p.API.LogWarn("vLLM post-processing failed; falling back to Upstage document output", "correlation_id", correlationID, "bot_id", bot.ID, "error", failure.Message)
+			} else {
+				output = truncateString(vllmOutput, cfg.MaxOutputLength)
+				debugView = successDebugView{
+					Request: buildSuccessRequestDebugPayload(requestDebugs, vllmDebug),
+				}
 			}
-			return &BotRunResult{
-				CorrelationID: correlationID,
-				BotID:         account.Definition.ID,
-				BotUsername:   account.Definition.Username,
-				BotName:       account.Definition.DisplayName,
-				Model:         account.Definition.Model,
-				APIDurationMS: apiDurationTotal.Milliseconds(),
-				Status:        "failed",
-				ErrorMessage:  failure.Message,
-				ErrorCode:     failure.ErrorCode,
-				ErrorDetail:   failure.Detail,
-				ErrorHint:     failure.Hint,
-				RequestURL:    failure.RequestURL,
-				HTTPStatus:    failure.HTTPStatus,
-				Retryable:     failure.Retryable,
-			}, vllmErr
 		}
-		output = truncateString(vllmOutput, cfg.MaxOutputLength)
-		requestDebugPayload = buildSuccessRequestDebugPayload(requestDebugs, vllmDebug)
 	}
 
 	if shouldMaskSensitive {
 		output = truncateString(maskSensitiveContent(output), cfg.MaxOutputLength)
 	}
-	post, err := p.postSuccess(channel, request.RootID, account, correlationID, output, requestDebugPayload, apiDurationTotal)
+	post, err := p.postSuccess(channel, request.RootID, account, correlationID, output, debugView, apiDurationTotal)
 	if err != nil {
 		failure := describeExecutionFailure(err, true, apiDurationTotal)
 		record := newExecutionRecord(request, account.Definition, correlationID, "failed", prompt, failure.Message, failure.ErrorCode, failure.Retryable, startedAt, time.Now())
@@ -558,7 +527,7 @@ func (p *Plugin) ensureBotInChannel(channelID, botUserID string) error {
 	return nil
 }
 
-func (p *Plugin) postSuccess(channel *model.Channel, rootID string, account botAccount, correlationID, output, requestDebug string, apiDuration time.Duration) (*model.Post, error) {
+func (p *Plugin) postSuccess(channel *model.Channel, rootID string, account botAccount, correlationID, output string, debugView successDebugView, apiDuration time.Duration) (*model.Post, error) {
 	if err := p.ensureBotInChannel(channel.Id, account.UserID); err != nil {
 		return nil, err
 	}
@@ -571,8 +540,11 @@ func (p *Plugin) postSuccess(channel *model.Channel, rootID string, account botA
 		"upstage_model":           account.Definition.Model,
 		"upstage_document_parser": "true",
 	}
-	if strings.TrimSpace(requestDebug) != "" {
-		props["upstage_request_input"] = requestDebug
+	if strings.TrimSpace(debugView.Request) != "" {
+		props["upstage_request_input"] = debugView.Request
+	}
+	if strings.TrimSpace(debugView.Output) != "" {
+		props["upstage_response_output"] = debugView.Output
 	}
 
 	post, appErr := p.API.CreatePost(&model.Post{
@@ -587,6 +559,15 @@ func (p *Plugin) postSuccess(channel *model.Channel, rootID string, account botA
 		return nil, fmt.Errorf("failed to create Upstage response post: %w", appErr)
 	}
 	return post, nil
+}
+
+func buildVLLMFallbackOutput(documentContext, notice string) string {
+	parts := []string{
+		"_" + strings.TrimSpace(notice) + "_",
+		"",
+		strings.TrimSpace(documentContext),
+	}
+	return strings.TrimSpace(strings.Join(parts, "\n"))
 }
 
 func (p *Plugin) postFailure(channel *model.Channel, rootID string, account botAccount, correlationID string, failure executionFailureView) error {
